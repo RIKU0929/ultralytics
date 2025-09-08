@@ -23,9 +23,12 @@ def non_max_suppression(
     max_time_img: float = 0.05,
     max_nms: int = 30000,
     max_wh: int = 7680,
+    in_place: bool = True,
     rotated: bool = False,
     end2end: bool = False,
     return_idxs: bool = False,
+    size_nms_lambda: float = 0.0,
+    size_nms_per_class: bool = True
 ):
     """
     Perform non-maximum suppression (NMS) on prediction results.
@@ -141,13 +144,41 @@ def non_max_suppression(
             if return_idxs:
                 xk = xk[filt]
 
-        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
-        scores = x[:, 4]  # scores
+        c_off = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
+        # --- サイズ考慮スコア（方式①: scale_max） ---
+        scores = x[:, 4].clone()
+        if size_nms_lambda > 0 and x.shape[0]:
+            import math, torch
+            LOG10_2 = math.log10(2.0)
+            boxes_xyxy = x[:, :4]
+            cls_id = x[:, 5]
+            w = (boxes_xyxy[:,2]-boxes_xyxy[:,0]).clamp_(min=0)
+            h = (boxes_xyxy[:,3]-boxes_xyxy[:,1]).clamp_(min=0)
+            area = w*h
+            new_scores = torch.empty_like(scores)
+            if size_nms_per_class:
+                for cls_val in torch.unique(cls_id):
+                    m = (cls_id == cls_val)
+                    if m.sum() == 0: continue
+                    a = area[m]
+                    lo, hi = a.min(), a.max()
+                    denom  = (hi - lo).clamp(min=1e-12)
+                    a_norm = ((a - lo).clamp(min=0) / denom).clamp(0,1)
+                    score_area = torch.log10(a_norm + 1.0)  # ∈[0,log10(2)]
+                    new_pre    = scores[m] + size_nms_lambda * score_area
+                    new_scores[m] = new_pre / (1.0 + size_nms_lambda * LOG10_2)
+            else:
+                lo, hi = area.min(), area.max()
+                denom  = (hi - lo).clamp(min=1e-12)
+                a_norm = ((area - lo).clamp(min=0) / denom).clamp(0,1)
+                score_area = torch.log10(a_norm + 1.0)
+                new_scores = (scores + size_nms_lambda * score_area) / (1.0 + size_nms_lambda * LOG10_2)
+            scores = new_scores
         if rotated:
-            boxes = torch.cat((x[:, :2] + c, x[:, 2:4], x[:, -1:]), dim=-1)  # xywhr
+            boxes = torch.cat((x[:, :2] + c_off, x[:, 2:4], x[:, -1:]), dim=-1)  # xywhr
             i = TorchNMS.fast_nms(boxes, scores, iou_thres, iou_func=batch_probiou)
         else:
-            boxes = x[:, :4] + c  # boxes (offset by class)
+            boxes = x[:, :4] + c_off  # boxes (offset by class)
             # Speed strategy: torchvision for val or already loaded (faster), TorchNMS for predict (lower latency)
             if "torchvision" in sys.modules:
                 import torchvision  # scope as slow import
@@ -156,8 +187,10 @@ def non_max_suppression(
             else:
                 i = TorchNMS.nms(boxes, scores, iou_thres)
         i = i[:max_det]  # limit detections
-
+        out = x[i].clone
+        out[:, 4] = scores[i]
         output[xi] = x[i]
+        
         if return_idxs:
             keepi[xi] = xk[i].view(-1)
         if (time.time() - t) > time_limit:
