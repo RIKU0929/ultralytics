@@ -125,3 +125,13 @@ cfg: # (str, optional) for overriding defaults.yaml
 
 # Tracker settings ------------------------------------------------------------------------------------------------------
 tracker: botsort.yaml # (str) tracker type, choices=[botsort.yaml, bytetrack.yaml]
+
+# Prediction settings ---------------------------------------------------------
+conf: 0.25
+iou: 0.5
+max_det: 300
+agnostic_nms: False
+classes:
+size_nms_lambda: 0.0      # ← 追加（float）0で無効
+size_nms_per_class: True  # ← 追加（bool）クラス毎に面積正規化
+
