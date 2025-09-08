@@ -64,7 +64,7 @@ class DetectionPredictor(BasePredictor):
             end2end=getattr(self.model, "end2end", False),
             rotated=self.args.task == "obb",
             return_idxs=save_feats,
-            size_nms_lambda = getattr(self.args, "size_nms_lambda", 0.0),
+            size_nms_lambda=getattr(self.args, "size_nms_lambda", 0.0),
             size_nms_per_class=getattr(self.args, "size_nms_per_class", True),
         )
 
