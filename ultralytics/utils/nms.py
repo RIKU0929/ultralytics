@@ -187,7 +187,7 @@ def non_max_suppression(
             else:
                 i = TorchNMS.nms(boxes, scores, iou_thres)
         i = i[:max_det]  # limit detections
-        out = x[i].clone
+        out = x[i].clone()
         out[:, 4] = scores[i]
         output[xi] = out
         
