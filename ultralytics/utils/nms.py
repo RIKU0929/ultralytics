@@ -4,6 +4,7 @@ import sys
 import time
 
 import torch
+import math
 
 from ultralytics.utils import LOGGER
 from ultralytics.utils.metrics import batch_probiou, box_iou
@@ -148,7 +149,6 @@ def non_max_suppression(
         # --- サイズ考慮スコア（方式①: scale_max） ---
         scores = x[:, 4].clone()
         if size_nms_lambda > 0 and x.shape[0]:
-            import math, torch
             LOG10_2 = math.log10(2.0)
             boxes_xyxy = x[:, :4]
             cls_id = x[:, 5]
@@ -189,7 +189,7 @@ def non_max_suppression(
         i = i[:max_det]  # limit detections
         out = x[i].clone
         out[:, 4] = scores[i]
-        output[xi] = x[i]
+        output[xi] = out
         
         if return_idxs:
             keepi[xi] = xk[i].view(-1)
