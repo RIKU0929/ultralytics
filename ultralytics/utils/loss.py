@@ -216,6 +216,13 @@ class v8DetectionLoss:
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
+        # Area-regularization hyperparameters
+        self.lambda_area = getattr(self.hyp, "lambda_area", 0.0)
+        self.area_alpha = getattr(self.hyp, "area_alpha", 2.0)
+        self.area_beta = getattr(self.hyp, "area_beta", 0.5)
+        self.area_mu = getattr(self.hyp, "area_mu", 0.1)
+        self.area_delta = getattr(self.hyp, "area_delta", 0.1)
+
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
         """Preprocess targets by converting to tensor format and scaling coordinates."""
         nl, ne = targets.shape
@@ -244,7 +251,7 @@ class v8DetectionLoss:
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        loss = torch.zeros(3, device=self.device)  # box, cls, dfl
+        loss = torch.zeros(4, device=self.device)  # box, cls, dfl, area
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -287,21 +294,62 @@ class v8DetectionLoss:
 
         # Bbox loss
         if fg_mask.sum():
+            target_bboxes /= stride_tensor
             loss[0], loss[2] = self.bbox_loss(
                 pred_distri,
                 pred_bboxes,
                 anchor_points,
-                target_bboxes / stride_tensor,
+                target_bboxes,
                 target_scores,
                 target_scores_sum,
                 fg_mask,
             )
 
+            if self.lambda_area > 0:
+                loss[3] = self.lambda_area * self.compute_area_loss(pred_bboxes, target_bboxes, fg_mask)
+
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
+        loss[3] *= 1.0  # already scaled by lambda_area
 
-        return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
+        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, area)
+
+    def compute_area_loss(
+        self, pred_bboxes: torch.Tensor, target_bboxes: torch.Tensor, fg_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute asymmetric log-area regularization for matched predictions."""
+        num_pos = fg_mask.sum()
+        if num_pos == 0:
+            return pred_bboxes.new_zeros(())
+
+        pred_boxes = pred_bboxes[fg_mask]
+        target_boxes = target_bboxes[fg_mask]
+        pred_area = xyxy2xywh(pred_boxes)[..., 2:].prod(-1)
+        target_area = xyxy2xywh(target_boxes)[..., 2:].prod(-1)
+
+        eps = 1e-9
+        pred_area = pred_area.clamp_min(eps)
+        target_area = target_area.clamp_min(eps)
+        r = pred_area.log() - target_area.log()
+        reg = torch.zeros_like(r)
+
+        neg_mask = r < 0
+        pos_mask = ~neg_mask
+        if neg_mask.any():
+            reg[neg_mask] = self.area_alpha * self.huber(r[neg_mask], self.area_delta)
+        if pos_mask.any():
+            reg[pos_mask] = self.area_beta * self.huber(r[pos_mask] - self.area_mu, self.area_delta)
+
+        return reg.sum() / num_pos.clamp_min(1)
+
+    @staticmethod
+    def huber(residual: torch.Tensor, delta: float) -> torch.Tensor:
+        """Return Huber penalty with transition point ``delta``."""
+        abs_res = residual.abs()
+        quadratic = 0.5 * residual.square()
+        linear = delta * (abs_res - 0.5 * delta)
+        return torch.where(abs_res <= delta, quadratic, linear)
 
 
 class v8SegmentationLoss(v8DetectionLoss):
