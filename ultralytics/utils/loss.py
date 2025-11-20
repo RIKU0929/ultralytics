@@ -299,8 +299,6 @@ class v8DetectionLoss:
                 fg_mask,
             )
 
-            if self.lambda_area > 0:
-                loss[3] = self.lambda_area * self.compute_area_loss(pred_bboxes, target_bboxes, fg_mask)
 
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
