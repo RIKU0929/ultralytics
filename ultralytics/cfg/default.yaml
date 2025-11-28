@@ -101,11 +101,6 @@ warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
 box: 7.5 # (float) box loss gain
 cls: 0.5 # (float) classification loss gain
 dfl: 1.5 # (float) distribution focal loss gain
-lambda_area: 0.03 # (float) area ratio loss gain
-area_alpha: 2.0 # (float) penalty gain for under-sized predictions
-area_beta: 0.5 # (float) penalty gain for over-sized predictions
-area_mu: 0.1 # (float) tolerated log-area margin for oversized boxes
-area_delta: 0.1 # (float) huber delta for area loss
 pose: 12.0 # (float) pose loss gain (pose tasks)
 kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
 nbs: 64 # (int) nominal batch size used for loss normalization

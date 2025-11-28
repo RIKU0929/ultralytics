@@ -678,8 +678,6 @@ class BaseTrainer:
         imgs = batch["img"].float()
         scales = batch.get("pixel_scale")
         if scales is None:
-            if torch.is_floating_point(imgs) and torch.max(imgs) <= 1.0:
-                return imgs
             return imgs / default_scale
         if not isinstance(scales, torch.Tensor):
             scales = torch.as_tensor(scales, device=imgs.device, dtype=imgs.dtype)
