@@ -13,6 +13,8 @@ import cv2
 import numpy as np
 import torch
 
+from ultralytics.utils.image_utils import is_fits_file, load_fits_image
+
 # OpenCV Multilanguage-friendly functions ------------------------------------------------------------------------------
 _imshow = cv2.imshow  # copy to avoid recursion errors
 
@@ -32,6 +34,9 @@ def imread(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
         >>> img = imread("path/to/image.jpg")
         >>> img = imread("path/to/image.jpg", cv2.IMREAD_GRAYSCALE)
     """
+    if is_fits_file(filename):
+        channels = 1 if flags == cv2.IMREAD_GRAYSCALE else 3
+        return load_fits_image(filename, channels=channels)
     file_bytes = np.fromfile(filename, np.uint8)
     if filename.endswith((".tiff", ".tif")):
         success, frames = cv2.imdecodemulti(file_bytes, cv2.IMREAD_UNCHANGED)
