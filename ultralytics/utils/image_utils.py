@@ -29,17 +29,32 @@ def _import_astropy():
 
 
 def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
-    """Load a FITS image as a contiguous float32 numpy array with the requested number of channels."""
+    """Load a FITS image, apply percentile clipping, and return a contiguous float32 array."""
+
     fits = _import_astropy()
     data = fits.getdata(path)
     if data is None:
         raise ValueError(f"Unable to read FITS data from {path}.")
+
+    # Convert and sanitize
     arr = np.asarray(data, dtype=np.float32)
     arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Percentile clipping for robust normalization
+    p_low, p_high = np.percentile(arr, [1.0, 99.9])
+    if p_high <= p_low:
+        arr = np.zeros_like(arr)
+    else:
+        arr = np.clip(arr, p_low, p_high)
+        arr = (arr - p_low) / (p_high - p_low)
+
+    # Ensure channel dimension exists
     if arr.ndim == 2:
         arr = arr[..., None]
     if arr.ndim != 3:
         raise ValueError(f"FITS image at {path} must be 2D or 3D, but has shape {arr.shape}.")
+
+    # Tile or trim channels to the requested count
     target = max(1, channels)
     current = arr.shape[2]
     if current == target:
