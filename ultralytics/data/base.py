@@ -137,7 +137,7 @@ class BaseDataset(Dataset):
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
-        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None       
         if self.uses_fits and self.cache == "ram":
             LOGGER.warning(
                 f"{self.prefix}FITS images detected, switching cache mode from 'ram' to 'disk' to limit memory usage."
