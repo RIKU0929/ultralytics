@@ -30,9 +30,46 @@ def imread(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
     Examples:
         >>> img = imread("path/to/image.jpg")
         >>> img = imread("path/to/image.jpg", cv2.IMREAD_GRAYSCALE)
+
+    Notes:
+        FITS images (.fits/.fts) are decoded with astropy when available, falling back to OpenCV otherwise.
     """
     file_bytes = np.fromfile(filename, np.uint8)
-    if filename.endswith((".tiff", ".tif")):
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".fits", ".fts"}:
+        try:
+            from astropy.io import fits
+
+            with fits.open(filename, memmap=False) as hdul:
+                hdu = hdul[0]
+                hdu_data = hdu.data
+                header = getattr(hdu, "header", {}) or {}
+
+            if hdu_data is None:
+                return None
+            data = np.asarray(hdu_data)
+
+            if header:
+                bscale = header.get("BSCALE", 1)
+                bzero = header.get("BZERO", 0)
+                if bscale != 1 or bzero != 0:
+                    data = data.astype(np.float32, copy=False)
+                    data = data * bscale + bzero
+
+            if data.dtype != np.uint16:
+                data = data.astype(np.float32, copy=False)
+
+            if data.ndim == 2:
+                data = np.repeat(data[..., None], 3, axis=2)
+            elif data.ndim == 3 and data.shape[0] in (1, 3):
+                data = np.moveaxis(data, 0, -1)
+                if data.shape[2] == 1:
+                    data = np.repeat(data, 3, axis=2)
+            return data
+        except Exception:
+            pass
+
+    if suffix in {".tiff", ".tif"}:
         success, frames = cv2.imdecodemulti(file_bytes, cv2.IMREAD_UNCHANGED)
         if success:
             # Handle RGB images in tif/tiff format
