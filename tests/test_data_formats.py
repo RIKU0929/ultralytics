@@ -1,3 +1,5 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 from ultralytics.data.base import BaseDataset
 from ultralytics.data.utils import IMG_FORMATS
 
@@ -25,4 +27,3 @@ def test_get_img_files_includes_fits(tmp_path):
     assert str(fits_file) in dataset.im_files
     assert str(fts_file) in dataset.im_files
     assert str(text_file) not in dataset.im_files
-
