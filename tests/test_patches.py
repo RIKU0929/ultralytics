@@ -1,3 +1,4 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Tests for monkey-patched utilities."""
 
 import sys
@@ -62,7 +63,6 @@ def test_imread_supports_fits(monkeypatch, tmp_path):
 
 def test_imread_png(tmp_path):
     """Verify standard image decoding still works for PNG files."""
-
     array = np.zeros((4, 4, 3), dtype=np.uint8)
     path = tmp_path / "img.png"
     cv2.imwrite(str(path), array)
