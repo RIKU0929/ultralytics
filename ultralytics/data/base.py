@@ -17,16 +17,15 @@ from torch.utils.data import Dataset
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
-from ultralytics.utils.image_utils import FITS_DTYPE_MAX, is_fits_file, load_fits_image
+from ultralytics.utils.image_utils import is_fits_file, load_fits_image
 from ultralytics.utils.patches import imread
 
 
 class BaseDataset(Dataset):
-    """
-    Base dataset class for loading and processing image data.
+    """Base dataset class for loading and processing image data.
 
-    This class provides core functionality for loading images, caching, and preparing data for training and inference
-    in object detection tasks.
+    This class provides core functionality for loading images, caching, and preparing data for training and inference in
+    object detection tasks.
 
     Attributes:
         img_path (str): Path to the folder containing images.
@@ -87,8 +86,7 @@ class BaseDataset(Dataset):
         fraction: float = 1.0,
         channels: int = 3,
     ):
-        """
-        Initialize BaseDataset with given configuration and options.
+        """Initialize BaseDataset with given configuration and options.
 
         Args:
             img_path (str | list[str]): Path to the folder containing images or list of image paths.
@@ -137,7 +135,7 @@ class BaseDataset(Dataset):
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
-        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None       
+        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
         if self.uses_fits and self.cache == "ram":
             LOGGER.warning(
                 f"{self.prefix}FITS images detected, switching cache mode from 'ram' to 'disk' to limit memory usage."
@@ -157,8 +155,7 @@ class BaseDataset(Dataset):
         self.transforms = self.build_transforms(hyp=hyp)
 
     def get_img_files(self, img_path: str | list[str]) -> list[str]:
-        """
-        Read image files from the specified path.
+        """Read image files from the specified path.
 
         Args:
             img_path (str | list[str]): Path or list of paths to image directories or files.
@@ -195,8 +192,7 @@ class BaseDataset(Dataset):
         return im_files
 
     def update_labels(self, include_class: list[int] | None) -> None:
-        """
-        Update labels to include only specified classes.
+        """Update labels to include only specified classes.
 
         Args:
             include_class (list[int], optional): List of classes to include. If None, all classes are included.
@@ -219,8 +215,7 @@ class BaseDataset(Dataset):
                 self.labels[i]["cls"][:, 0] = 0
 
     def load_image(self, i: int, rect_mode: bool = True) -> tuple[np.ndarray, tuple[int, int], tuple[int, int]]:
-        """
-        Load an image from dataset index 'i'.
+        """Load an image from dataset index 'i'.
 
         Args:
             i (int): Index of the image to load.
@@ -295,8 +290,7 @@ class BaseDataset(Dataset):
             np.save(f.as_posix(), self._load_image_from_source(self.im_files[i]), allow_pickle=False)
 
     def check_cache_disk(self, safety_margin: float = 0.5) -> bool:
-        """
-        Check if there's enough disk space for caching images.
+        """Check if there's enough disk space for caching images.
 
         Args:
             safety_margin (float): Safety margin factor for disk space calculation.
@@ -319,7 +313,7 @@ class BaseDataset(Dataset):
                 LOGGER.warning(f"{self.prefix}Skipping caching images to disk, directory not writeable")
                 return False
         disk_required = b * self.ni / n * (1 + safety_margin)  # bytes required to cache dataset to disk
-        total, used, free = shutil.disk_usage(Path(self.im_files[0]).parent)
+        total, _used, free = shutil.disk_usage(Path(self.im_files[0]).parent)
         if disk_required > free:
             self.cache = None
             LOGGER.warning(
@@ -331,8 +325,7 @@ class BaseDataset(Dataset):
         return True
 
     def check_cache_ram(self, safety_margin: float = 0.5) -> bool:
-        """
-        Check if there's enough RAM for caching images.
+        """Check if there's enough RAM for caching images.
 
         Args:
             safety_margin (float): Safety margin factor for RAM calculation.
@@ -390,8 +383,7 @@ class BaseDataset(Dataset):
         return self.transforms(self.get_image_and_label(index))
 
     def get_image_and_label(self, index: int) -> dict[str, Any]:
-        """
-        Get and return label information from the dataset.
+        """Get and return label information from the dataset.
 
         Args:
             index (int): Index of the image to retrieve.
@@ -402,7 +394,7 @@ class BaseDataset(Dataset):
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
         label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
-        label["pixel_scale"] = FITS_DTYPE_MAX if is_fits_file(self.im_files[index]) else 255.0
+        label["pixel_scale"] = 255.0
         label["ratio_pad"] = (
             label["resized_shape"][0] / label["ori_shape"][0],
             label["resized_shape"][1] / label["ori_shape"][1],
@@ -427,8 +419,7 @@ class BaseDataset(Dataset):
         return label
 
     def build_transforms(self, hyp: dict[str, Any] | None = None):
-        """
-        Users can customize augmentations here.
+        """Users can customize augmentations here.
 
         Examples:
             >>> if self.augment:
@@ -441,8 +432,7 @@ class BaseDataset(Dataset):
         raise NotImplementedError
 
     def get_labels(self) -> list[dict[str, Any]]:
-        """
-        Users can customize their own format here.
+        """Users can customize their own format here.
 
         Examples:
             Ensure output is a dictionary with the following keys:

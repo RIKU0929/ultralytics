@@ -1,5 +1,4 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 """Utility helpers for working with specialized image formats."""
 
 from __future__ import annotations
@@ -29,8 +28,7 @@ def _import_astropy():
 
 
 def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
-    """Load a FITS image, apply percentile clipping, and return a contiguous float32 array."""
-
+    """Load a FITS image, apply percentile clipping, and return a contiguous uint8 array."""
     fits = _import_astropy()
     data = fits.getdata(path)
     if data is None:
@@ -47,6 +45,7 @@ def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
     else:
         arr = np.clip(arr, p_low, p_high)
         arr = (arr - p_low) / (p_high - p_low)
+        arr *= 255.0  # scale to standard uint8 intensity range for downstream augmentations
 
     # Ensure channel dimension exists
     if arr.ndim == 2:
@@ -58,7 +57,7 @@ def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
     target = max(1, channels)
     current = arr.shape[2]
     if current == target:
-        return np.ascontiguousarray(arr)
+        return np.ascontiguousarray(arr.astype(np.uint8))
     if current == 1:
         arr = np.tile(arr, (1, 1, target))
     elif target == 1:
@@ -69,7 +68,7 @@ def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
         reps = int(np.ceil(target / current))
         arr = np.concatenate([arr] * reps, axis=2)
         arr = arr[..., :target]
-    return np.ascontiguousarray(arr)
+    return np.ascontiguousarray(arr.astype(np.uint8))
 
 
 __all__ = ("FITS_DTYPE_MAX", "FITS_EXTENSIONS", "is_fits_file", "load_fits_image")
