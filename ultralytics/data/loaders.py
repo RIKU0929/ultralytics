@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Thread
 from typing import Any
 
+from astropy.io import fits
 import cv2
 import numpy as np
 import torch
@@ -21,6 +22,42 @@ from ultralytics.data.utils import FORMATS_HELP_MSG, IMG_FORMATS, VID_FORMATS
 from ultralytics.utils import IS_COLAB, IS_KAGGLE, LOGGER, ops
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.patches import imread
+
+
+def _read_fits_image(path: str, channels: int) -> np.ndarray:
+    """Read a FITS image, scale it to uint8, and expand channels as requested."""
+    data = fits.getdata(path, memmap=False)
+    if data is None:
+        raise ValueError(f"FITS file {path} contains no image data")
+
+    array = np.asarray(data)
+    array = np.squeeze(array)
+    if array.ndim < 2:
+        raise ValueError(f"FITS file {path} must contain at least a 2D image")
+
+    if array.ndim > 2:
+        array = array.reshape((-1, *array.shape[-2:]))[0]
+
+    array = np.nan_to_num(array, copy=False)
+    arr_min = array.min()
+    arr_max = array.max()
+    if arr_max > arr_min:
+        scaled = (array - arr_min) / (arr_max - arr_min)
+    else:
+        scaled = np.zeros_like(array, dtype=np.float32)
+
+    scaled = np.clip(scaled, 0.0, 1.0)
+    image = (scaled * 255).astype(np.uint8)
+
+    if channels == 1:
+        return image[..., None] if image.ndim == 2 else image
+
+    if image.ndim == 2:
+        image = np.repeat(image[..., None], 3, axis=2)
+    elif image.shape[2] == 1:
+        image = np.repeat(image, 3, axis=2)
+
+    return image
 
 
 @dataclass
@@ -409,6 +446,7 @@ class LoadImagesAndVideos:
                     raise StopIteration
 
             path = self.files[self.count]
+            suffix = path.rpartition(".")[-1].lower()
             if self.video_flag[self.count]:
                 self.mode = "video"
                 if not self.cap or not self.cap.isOpened():
@@ -443,9 +481,9 @@ class LoadImagesAndVideos:
                     if self.count < self.nf:
                         self._new_video(self.files[self.count])
             else:
-                # Handle image files (including HEIC)
+                # Handle image files (including HEIC and FITS)
                 self.mode = "image"
-                if path.rpartition(".")[-1].lower() == "heic":
+                if suffix == "heic":
                     # Load HEIC image using Pillow with pillow-heif
                     check_requirements("pi-heif")
 
@@ -454,6 +492,9 @@ class LoadImagesAndVideos:
                     register_heif_opener()  # Register HEIF opener with Pillow
                     with Image.open(path) as img:
                         im0 = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)  # convert image to BGR nparray
+                elif suffix in {"fts", "fits"}:
+                    channels = 1 if self.cv2_flag == cv2.IMREAD_GRAYSCALE else 3
+                    im0 = _read_fits_image(path, channels=channels)
                 else:
                     im0 = imread(path, flags=self.cv2_flag)  # BGR
                 if im0 is None:

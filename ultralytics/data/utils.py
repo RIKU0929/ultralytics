@@ -16,6 +16,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+from astropy.io import fits
 
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.utils import (
@@ -37,7 +38,7 @@ from ultralytics.utils.downloads import download, safe_download, unzip_file
 from ultralytics.utils.ops import segments2boxes
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
-IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm", "heic"}  # image suffixes
+IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm", "heic", "fts", "fits"}  # image suffixes
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # video suffixes
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
 
@@ -152,25 +153,52 @@ def exif_size(img: Image.Image) -> tuple[int, int]:
     return s
 
 
+def _verify_fits_image(im_file: str) -> tuple[int, int]:
+    """Verify FITS image integrity and return its height and width."""
+    with fits.open(im_file, memmap=False) as hdul:
+        if not hdul or hdul[0].data is None:
+            raise ValueError("FITS file contains no image data")
+        data = np.asarray(hdul[0].data)
+
+    data = np.squeeze(data)
+    if data.ndim < 2:
+        raise ValueError("FITS image must be at least 2D")
+
+    h, w = data.shape[-2:]
+    if (h <= 9) or (w <= 9):
+        raise ValueError(f"image size {(h, w)} <10 pixels")
+
+    dtype = data.dtype
+    if dtype is None or dtype.kind not in {"i", "u"} or dtype.itemsize < 2:
+        raise ValueError(f"FITS image dtype must be 16-bit integer, got {dtype}")
+
+    return h, w
+
+
 def verify_image(args: tuple) -> tuple:
     """Verify one image."""
     (im_file, cls), prefix = args
     # Number (found, corrupt), message
     nf, nc, msg = 0, 0, ""
     try:
-        im = Image.open(im_file)
-        im.verify()  # PIL verify
-        shape = exif_size(im)  # image size
-        shape = (shape[1], shape[0])  # hw
-        assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
-        assert im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}. {FORMATS_HELP_MSG}"
-        if im.format.lower() in {"jpg", "jpeg"}:
-            with open(im_file, "rb") as f:
-                f.seek(-2, 2)
-                if f.read() != b"\xff\xd9":  # corrupt JPEG
-                    ImageOps.exif_transpose(Image.open(im_file)).save(im_file, "JPEG", subsampling=0, quality=100)
-                    msg = f"{prefix}{im_file}: corrupt JPEG restored and saved"
-        nf = 1
+        suffix = Path(im_file).suffix.lower()
+        if suffix in {".fts", ".fits"}:
+            _verify_fits_image(im_file)
+            nf = 1
+        else:
+            im = Image.open(im_file)
+            im.verify()  # PIL verify
+            shape = exif_size(im)  # image size
+            shape = (shape[1], shape[0])  # hw
+            assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
+            assert im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}. {FORMATS_HELP_MSG}"
+            if im.format.lower() in {"jpg", "jpeg"}:
+                with open(im_file, "rb") as f:
+                    f.seek(-2, 2)
+                    if f.read() != b"\xff\xd9":  # corrupt JPEG
+                        ImageOps.exif_transpose(Image.open(im_file)).save(im_file, "JPEG", subsampling=0, quality=100)
+                        msg = f"{prefix}{im_file}: corrupt JPEG restored and saved"
+            nf = 1
     except Exception as e:
         nc = 1
         msg = f"{prefix}{im_file}: ignoring corrupt image/label: {e}"
@@ -184,18 +212,22 @@ def verify_image_label(args: tuple) -> list:
     nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
     try:
         # Verify images
-        im = Image.open(im_file)
-        im.verify()  # PIL verify
-        shape = exif_size(im)  # image size
-        shape = (shape[1], shape[0])  # hw
-        assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
-        assert im.format.lower() in IMG_FORMATS, f"invalid image format {im.format}. {FORMATS_HELP_MSG}"
-        if im.format.lower() in {"jpg", "jpeg"}:
-            with open(im_file, "rb") as f:
-                f.seek(-2, 2)
-                if f.read() != b"\xff\xd9":  # corrupt JPEG
-                    ImageOps.exif_transpose(Image.open(im_file)).save(im_file, "JPEG", subsampling=0, quality=100)
-                    msg = f"{prefix}{im_file}: corrupt JPEG restored and saved"
+        suffix = Path(im_file).suffix.lower()
+        if suffix in {".fts", ".fits"}:
+            _verify_fits_image(im_file)
+        else:
+            im = Image.open(im_file)
+            im.verify()  # PIL verify
+            shape = exif_size(im)  # image size
+            shape = (shape[1], shape[0])  # hw
+            assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
+            assert im.format.lower() in IMG_FORMATS, f"invalid image format {im.format}. {FORMATS_HELP_MSG}"
+            if im.format.lower() in {"jpg", "jpeg"}:
+                with open(im_file, "rb") as f:
+                    f.seek(-2, 2)
+                    if f.read() != b"\xff\xd9":  # corrupt JPEG
+                        ImageOps.exif_transpose(Image.open(im_file)).save(im_file, "JPEG", subsampling=0, quality=100)
+                        msg = f"{prefix}{im_file}: corrupt JPEG restored and saved"
 
         # Verify labels
         if os.path.isfile(lb_file):
