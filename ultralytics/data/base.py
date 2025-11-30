@@ -17,6 +17,7 @@ from torch.utils.data import Dataset
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
+from ultralytics.utils.image_utils import FITS_DTYPE_MAX, is_fits_file, load_fits_image
 from ultralytics.utils.patches import imread
 
 
@@ -126,6 +127,9 @@ class BaseDataset(Dataset):
             assert self.batch_size is not None
             self.set_rectangle()
 
+        # FITS metadata
+        self.uses_fits = any(is_fits_file(f) for f in self.im_files)
+
         # Buffer thread for mosaic images
         self.buffer = []  # buffer size = batch size
         self.max_buffer_length = min((self.ni, self.batch_size * 8, 1000)) if self.augment else 0
@@ -134,6 +138,11 @@ class BaseDataset(Dataset):
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        if self.uses_fits and self.cache == "ram":
+            LOGGER.warning(
+                f"{self.prefix}FITS images detected, switching cache mode from 'ram' to 'disk' to limit memory usage."
+            )
+            self.cache = "disk"
         if self.cache == "ram" and self.check_cache_ram():
             if hyp.deterministic:
                 LOGGER.warning(
@@ -233,9 +242,9 @@ class BaseDataset(Dataset):
                 except Exception as e:
                     LOGGER.warning(f"{self.prefix}Removing corrupt *.npy image file {fn} due to: {e}")
                     Path(fn).unlink(missing_ok=True)
-                    im = imread(f, flags=self.cv2_flag)  # BGR
+                    im = self._load_image_from_source(f)
             else:  # read image
-                im = imread(f, flags=self.cv2_flag)  # BGR
+                im = self._load_image_from_source(f)
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {f}")
 
@@ -283,7 +292,7 @@ class BaseDataset(Dataset):
         """Save an image as an *.npy file for faster loading."""
         f = self.npy_files[i]
         if not f.exists():
-            np.save(f.as_posix(), imread(self.im_files[i]), allow_pickle=False)
+            np.save(f.as_posix(), self._load_image_from_source(self.im_files[i]), allow_pickle=False)
 
     def check_cache_disk(self, safety_margin: float = 0.5) -> bool:
         """
@@ -301,7 +310,7 @@ class BaseDataset(Dataset):
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
             im_file = random.choice(self.im_files)
-            im = imread(im_file)
+            im = self._load_image_from_source(im_file)
             if im is None:
                 continue
             b += im.nbytes
@@ -334,7 +343,7 @@ class BaseDataset(Dataset):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
-            im = imread(random.choice(self.im_files))  # sample image
+            im = self._load_image_from_source(random.choice(self.im_files))  # sample image
             if im is None:
                 continue
             ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
@@ -393,6 +402,7 @@ class BaseDataset(Dataset):
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
         label["img"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
+        label["pixel_scale"] = 255.0
         label["ratio_pad"] = (
             label["resized_shape"][0] / label["ori_shape"][0],
             label["resized_shape"][1] / label["ori_shape"][1],
@@ -400,6 +410,13 @@ class BaseDataset(Dataset):
         if self.rect:
             label["rect_shape"] = self.batch_shapes[self.batch[index]]
         return self.update_labels_info(label)
+
+    def _load_image_from_source(self, path: str) -> np.ndarray | None:
+        """Read an image from disk, dispatching to FITS readers when necessary."""
+        if is_fits_file(path):
+            channels = 1 if self.channels == 1 else 3
+            return load_fits_image(path, channels=channels)
+        return imread(path, flags=self.cv2_flag)
 
     def __len__(self) -> int:
         """Return the length of the labels list for the dataset."""
