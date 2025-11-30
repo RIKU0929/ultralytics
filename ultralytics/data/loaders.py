@@ -12,10 +12,10 @@ from pathlib import Path
 from threading import Thread
 from typing import Any
 
-from astropy.io import fits
 import cv2
 import numpy as np
 import torch
+from astropy.io import fits
 from PIL import Image
 
 from ultralytics.data.utils import FORMATS_HELP_MSG, IMG_FORMATS, VID_FORMATS

@@ -15,8 +15,8 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PIL import Image, ImageOps
 from astropy.io import fits
+from PIL import Image, ImageOps
 
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.utils import (
@@ -38,7 +38,21 @@ from ultralytics.utils.downloads import download, safe_download, unzip_file
 from ultralytics.utils.ops import segments2boxes
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
-IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm", "heic", "fts", "fits"}  # image suffixes
+IMG_FORMATS = {
+    "bmp",
+    "dng",
+    "jpeg",
+    "jpg",
+    "mpo",
+    "png",
+    "tif",
+    "tiff",
+    "webp",
+    "pfm",
+    "heic",
+    "fts",
+    "fits",
+}  # image suffixes
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # video suffixes
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
 
