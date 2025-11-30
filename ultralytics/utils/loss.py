@@ -18,8 +18,7 @@ from .tal import bbox2dist
 
 
 class VarifocalLoss(nn.Module):
-    """
-    Varifocal loss by Zhang et al.
+    """Varifocal loss by Zhang et al.
 
     Implements the Varifocal Loss function for addressing class imbalance in object detection by focusing on
     hard-to-classify examples and balancing positive/negative samples.
@@ -51,11 +50,10 @@ class VarifocalLoss(nn.Module):
 
 
 class FocalLoss(nn.Module):
-    """
-    Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5).
+    """Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5).
 
-    Implements the Focal Loss function for addressing class imbalance by down-weighting easy examples and focusing
-    on hard negatives during training.
+    Implements the Focal Loss function for addressing class imbalance by down-weighting easy examples and focusing on
+    hard negatives during training.
 
     Attributes:
         gamma (float): The focusing parameter that controls how much the loss focuses on hard-to-classify examples.
@@ -216,7 +214,6 @@ class v8DetectionLoss:
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
-
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
         """Preprocess targets by converting to tensor format and scaling coordinates."""
         nl, ne = targets.shape
@@ -288,7 +285,6 @@ class v8DetectionLoss:
 
         # Bbox loss
         if fg_mask.sum():
-
             loss[0], loss[2] = self.bbox_loss(
                 pred_distri,
                 pred_bboxes,
@@ -299,13 +295,11 @@ class v8DetectionLoss:
                 fg_mask,
             )
 
-
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
-
 
 
 class v8SegmentationLoss(v8DetectionLoss):
@@ -403,8 +397,7 @@ class v8SegmentationLoss(v8DetectionLoss):
     def single_mask_loss(
         gt_mask: torch.Tensor, pred: torch.Tensor, proto: torch.Tensor, xyxy: torch.Tensor, area: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Compute the instance segmentation loss for a single image.
+        """Compute the instance segmentation loss for a single image.
 
         Args:
             gt_mask (torch.Tensor): Ground truth mask of shape (N, H, W), where N is the number of objects.
@@ -436,8 +429,7 @@ class v8SegmentationLoss(v8DetectionLoss):
         imgsz: torch.Tensor,
         overlap: bool,
     ) -> torch.Tensor:
-        """
-        Calculate the loss for instance segmentation.
+        """Calculate the loss for instance segmentation.
 
         Args:
             fg_mask (torch.Tensor): A binary tensor of shape (BS, N_anchors) indicating which anchors are positive.
@@ -589,8 +581,7 @@ class v8PoseLoss(v8DetectionLoss):
         target_bboxes: torch.Tensor,
         pred_kpts: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Calculate the keypoints loss for the model.
+        """Calculate the keypoints loss for the model.
 
         This function calculates the keypoints loss and keypoints object loss for a given batch. The keypoints loss is
         based on the difference between the predicted keypoints and ground truth keypoints. The keypoints object loss is
@@ -764,8 +755,7 @@ class v8OBBLoss(v8DetectionLoss):
     def bbox_decode(
         self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, pred_angle: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Decode predicted object bounding box coordinates from anchor points and distribution.
+        """Decode predicted object bounding box coordinates from anchor points and distribution.
 
         Args:
             anchor_points (torch.Tensor): Anchor points, (h*w, 2).

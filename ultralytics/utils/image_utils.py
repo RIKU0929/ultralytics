@@ -1,5 +1,4 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
 """Utility helpers for working with specialized image formats."""
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ def _import_astropy():
 
 def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
     """Load a FITS image, apply percentile clipping, and return a contiguous uint8 array."""
-
     fits = _import_astropy()
     data = fits.getdata(path)
     if data is None:
