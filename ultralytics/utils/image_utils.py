@@ -34,6 +34,10 @@ def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
     if data is None:
         raise ValueError(f"Unable to read FITS data from {path}.")
 
+    # --- 【修正点】ここで上下反転を加える ---
+    # FITSの標準（左下原点）を 画像処理の標準（左上原点）に合わせる
+    data = np.flipud(data)    
+
     # Convert and sanitize
     arr = np.asarray(data, dtype=np.float32)
     arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
