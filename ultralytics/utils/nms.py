@@ -26,11 +26,13 @@ def non_max_suppression(
     rotated: bool = False,
     end2end: bool = False,
     return_idxs: bool = False,
+    size_nms_lambda: float = 0.0,  # Lambda for size-aware NMS (ranking only)
 ):
-    """Perform non-maximum suppression (NMS) on prediction results.
+    """
+    Perform non-maximum suppression (NMS) on prediction results.
 
-    Applies NMS to filter overlapping bounding boxes based on confidence and IoU thresholds. Supports multiple detection
-    formats including standard boxes, rotated boxes, and masks.
+    Applies NMS to filter overlapping bounding boxes based on confidence and IoU thresholds. Supports multiple
+    detection formats including standard boxes, rotated boxes, and masks.
 
     Args:
         prediction (torch.Tensor): Predictions with shape (batch_size, num_classes + 4 + num_masks, num_boxes)
@@ -49,10 +51,12 @@ def non_max_suppression(
         rotated (bool): Whether to handle Oriented Bounding Boxes (OBB).
         end2end (bool): Whether the model is end-to-end and doesn't require NMS.
         return_idxs (bool): Whether to return the indices of kept detections.
+        size_nms_lambda (float): If > 0, activates size-aware ranking for NMS ordering only.
 
     Returns:
-        output (list[torch.Tensor]): List of detections per image with shape (num_boxes, 6 + num_masks) containing (x1,
-            y1, x2, y2, confidence, class, mask1, mask2, ...).
+        output (list[torch.Tensor]): List of detections per image with shape (num_boxes, 6 + num_masks)
+            containing (x1, y1, x2, y2, confidence, class, mask1, mask2, ...). The returned confidence is the
+            ORIGINAL model confidence (not size-adjusted).
         keepi (list[torch.Tensor]): Indices of kept detections if return_idxs=True.
     """
     # Checks
@@ -77,7 +81,6 @@ def non_max_suppression(
     xinds = torch.arange(prediction.shape[-1], device=prediction.device).expand(bs, -1)[..., None]  # to track idxs
 
     # Settings
-    # min_wh = 2  # (pixels) minimum box width and height
     time_limit = 2.0 + max_time_img * bs  # seconds to quit after
     multi_label &= nc > 1  # multiple labels per box (adds 0.5ms/img)
 
@@ -88,10 +91,10 @@ def non_max_suppression(
     t = time.time()
     output = [torch.zeros((0, 6 + extra), device=prediction.device)] * bs
     keepi = [torch.zeros((0, 1), device=prediction.device)] * bs  # to store the kept idxs
+
     for xi, (x, xk) in enumerate(zip(prediction, xinds)):  # image index, (preds, preds indices)
         # Apply constraints
-        # x[((x[:, 2:4] < min_wh) | (x[:, 2:4] > max_wh)).any(1), 4] = 0  # width-height
-        filt = xc[xi]  # confidence
+        filt = xc[xi]  # confidence filter (uses ORIGINAL pre-adjust scores)
         x = x[filt]
         if return_idxs:
             xk = xk[filt]
@@ -134,29 +137,61 @@ def non_max_suppression(
         n = x.shape[0]  # number of boxes
         if not n:  # no boxes
             continue
-        if n > max_nms:  # excess boxes
-            filt = x[:, 4].argsort(descending=True)[:max_nms]  # sort by confidence and remove excess boxes
+        if n > max_nms:  # excess boxes (still using ORIGINAL conf for pre-trim)
+            filt = x[:, 4].argsort(descending=True)[:max_nms]
             x = x[filt]
             if return_idxs:
                 xk = xk[filt]
+            n = x.shape[0]
 
-        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
-        scores = x[:, 4]  # scores
+        # ==============================
+        # Size-aware NMS (ranking only)
+        # ==============================
+        # Keep original model confidence intact for return
+        orig_conf = x[:, 4].clone()
+
+        # Default: use original confidence for NMS ordering
+        scores_for_nms = orig_conf
+
+        if size_nms_lambda > 0.0 and n > 1:
+            # Compute areas
+            boxes_for_area = x[:, :4]
+            areas = (boxes_for_area[:, 2] - boxes_for_area[:, 0]) * (boxes_for_area[:, 3] - boxes_for_area[:, 1])
+
+            # Min-Max normalize areas (per image)
+            min_area, max_area = areas.min(), areas.max()
+            if max_area > min_area:
+                a_norm = (areas - min_area) / (max_area - min_area)
+            else:
+                a_norm = torch.zeros_like(areas)
+
+            lam = size_nms_lambda
+            # Denominator is a per-image constant; including/excluding doesn't change ordering.
+            # Kept for continuity with earlier formula.
+            
+            scores_for_nms = orig_conf + lam * torch.log10(1 + a_norm)
+
+        # Class offset for class-aware vs agnostic
+        c = x[:, 5:6] * (0 if agnostic else max_wh)
+
         if rotated:
             boxes = torch.cat((x[:, :2] + c, x[:, 2:4], x[:, -1:]), dim=-1)  # xywhr
-            i = TorchNMS.fast_nms(boxes, scores, iou_thres, iou_func=batch_probiou)
+            i = TorchNMS.fast_nms(boxes, scores_for_nms, iou_thres, iou_func=batch_probiou)
         else:
             boxes = x[:, :4] + c  # boxes (offset by class)
             # Speed strategy: torchvision for val or already loaded (faster), TorchNMS for predict (lower latency)
             if "torchvision" in sys.modules:
                 import torchvision  # scope as slow import
-
-                i = torchvision.ops.nms(boxes, scores, iou_thres)
+                i = torchvision.ops.nms(boxes, scores_for_nms, iou_thres)
             else:
-                i = TorchNMS.nms(boxes, scores, iou_thres)
+                i = TorchNMS.nms(boxes, scores_for_nms, iou_thres)
         i = i[:max_det]  # limit detections
 
-        output[xi] = x[i]
+        # Restore ORIGINAL confidence in returned outputs
+        xi_out = x[i].clone()
+        xi_out[:, 4] = orig_conf[i]
+        output[xi] = xi_out
+
         if return_idxs:
             keepi[xi] = xk[i].view(-1)
         if (time.time() - t) > time_limit:
@@ -167,7 +202,8 @@ def non_max_suppression(
 
 
 class TorchNMS:
-    """Ultralytics custom NMS implementation optimized for YOLO.
+    """
+    Ultralytics custom NMS implementation optimized for YOLO.
 
     This class provides static methods for performing non-maximum suppression (NMS) operations on bounding boxes,
     including both standard NMS and batched NMS for multi-class scenarios.
@@ -192,7 +228,8 @@ class TorchNMS:
         iou_func=box_iou,
         exit_early: bool = True,
     ) -> torch.Tensor:
-        """Fast-NMS implementation from https://arxiv.org/pdf/1904.02689 using upper triangular matrix operations.
+        """
+        Fast-NMS implementation from https://arxiv.org/pdf/1904.02689 using upper triangular matrix operations.
 
         Args:
             boxes (torch.Tensor): Bounding boxes with shape (N, 4) in xyxy format.
@@ -204,12 +241,6 @@ class TorchNMS:
 
         Returns:
             (torch.Tensor): Indices of boxes to keep after NMS.
-
-        Examples:
-            Apply NMS to a set of boxes
-            >>> boxes = torch.tensor([[0, 0, 10, 10], [5, 5, 15, 15]])
-            >>> scores = torch.tensor([0.9, 0.8])
-            >>> keep = TorchNMS.nms(boxes, scores, 0.5)
         """
         if boxes.numel() == 0 and exit_early:
             return torch.empty((0,), dtype=torch.int64, device=boxes.device)
@@ -235,7 +266,8 @@ class TorchNMS:
 
     @staticmethod
     def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torch.Tensor:
-        """Optimized NMS with early termination that matches torchvision behavior exactly.
+        """
+        Optimized NMS with early termination that matches torchvision behavior exactly.
 
         Args:
             boxes (torch.Tensor): Bounding boxes with shape (N, 4) in xyxy format.
@@ -244,12 +276,6 @@ class TorchNMS:
 
         Returns:
             (torch.Tensor): Indices of boxes to keep after NMS.
-
-        Examples:
-            Apply NMS to a set of boxes
-            >>> boxes = torch.tensor([[0, 0, 10, 10], [5, 5, 15, 15]])
-            >>> scores = torch.tensor([0.9, 0.8])
-            >>> keep = TorchNMS.nms(boxes, scores, 0.5)
         """
         if boxes.numel() == 0:
             return torch.empty((0,), dtype=torch.int64, device=boxes.device)
@@ -301,7 +327,8 @@ class TorchNMS:
         iou_threshold: float,
         use_fast_nms: bool = False,
     ) -> torch.Tensor:
-        """Batched NMS for class-aware suppression.
+        """
+        Batched NMS for class-aware suppression.
 
         Args:
             boxes (torch.Tensor): Bounding boxes with shape (N, 4) in xyxy format.
@@ -312,13 +339,6 @@ class TorchNMS:
 
         Returns:
             (torch.Tensor): Indices of boxes to keep after NMS.
-
-        Examples:
-            Apply batched NMS across multiple classes
-            >>> boxes = torch.tensor([[0, 0, 10, 10], [5, 5, 15, 15]])
-            >>> scores = torch.tensor([0.9, 0.8])
-            >>> idxs = torch.tensor([0, 1])
-            >>> keep = TorchNMS.batched_nms(boxes, scores, idxs, 0.5)
         """
         if boxes.numel() == 0:
             return torch.empty((0,), dtype=torch.int64, device=boxes.device)
