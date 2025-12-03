@@ -43,7 +43,7 @@ def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
     arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
     # Percentile clipping for robust normalization
-    p_low, p_high = np.percentile(arr, [1.0, 99.9])
+    p_low, p_high = np.percentile(arr, [1.0, 99.0])
     if p_high <= p_low:
         arr = np.zeros_like(arr)
     else:
