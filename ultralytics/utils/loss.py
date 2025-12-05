@@ -207,6 +207,9 @@ class v8DetectionLoss:
         self.no = m.nc + m.reg_max * 4
         self.reg_max = m.reg_max
         self.device = device
+        self.area_reg_lambda = getattr(h, "area_reg_lambda", 0.0)  # area regularization strength
+        self.area_min_gt = None  # minimum GT bbox area (normalized)
+        self.area_max_gt = None  # maximum GT bbox area (normalized)
 
         self.use_dfl = m.reg_max > 1
 
@@ -242,7 +245,7 @@ class v8DetectionLoss:
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        loss = torch.zeros(3, device=self.device)  # box, cls, dfl
+        loss = torch.zeros(4, device=self.device)  # box, cls, dfl, area
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -299,7 +302,24 @@ class v8DetectionLoss:
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
+        # Area regularization loss (reward larger positive boxes)
+        area_loss = torch.zeros(1, device=self.device, dtype=dtype)
+        if self.area_reg_lambda > 0 and fg_mask.any():
+            if self.area_min_gt is not None and self.area_max_gt is not None and self.area_max_gt > self.area_min_gt:
+                stride_broadcast = stride_tensor.view(1, -1, 1)
+                pred_xyxy_pixels = pred_bboxes * stride_broadcast
+                pred_wh_norm = (pred_xyxy_pixels[..., 2:4] - pred_xyxy_pixels[..., 0:2]).clamp(min=0)
+                pred_wh_norm = pred_wh_norm / imgsz[[1, 0]]
+                pred_area = (pred_wh_norm[..., 0] * pred_wh_norm[..., 1])[fg_mask]
+                if pred_area.numel():
+                    area_min = torch.as_tensor(self.area_min_gt, device=self.device, dtype=dtype)
+                    area_max = torch.as_tensor(self.area_max_gt, device=self.device, dtype=dtype)
+                    norm_area = (pred_area - area_min) / (area_max - area_min + 1e-6)
+                    norm_area = norm_area.clamp(0.0, 1.0)
+                    area_loss = -self.area_reg_lambda * torch.log10(1.0 + norm_area).mean()
+        loss[3] = area_loss
+
+        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, area)
 
 
 class v8SegmentationLoss(v8DetectionLoss):
