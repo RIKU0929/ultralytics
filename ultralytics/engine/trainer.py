@@ -192,6 +192,10 @@ class BaseTrainer:
         for callback in self.callbacks.get(event, []):
             callback(self)
 
+    def update_loss_metadata(self):
+        """Hook for subclasses to update loss-related metadata after dataloaders are built."""
+        return
+
     def train(self):
         """Allow device='', device=None on Multi-GPU systems to default to device=0."""
         if isinstance(self.args.device, str) and len(self.args.device):  # i.e. device='0' or device='0,1,2,3'
@@ -330,6 +334,9 @@ class BaseTrainer:
             self.ema = ModelEMA(self.model)
             if self.args.plots:
                 self.plot_training_labels()
+
+        # Give subclasses a chance to augment loss settings once dataloaders are initialized
+        self.update_loss_metadata()
 
         # Optimizer
         self.accumulate = max(round(self.args.nbs / self.batch_size), 1)  # accumulate loss before optimizing

@@ -16,6 +16,7 @@ from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
+from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils.patches import override_configs
 from ultralytics.utils.plotting import plot_images, plot_labels
 from ultralytics.utils.torch_utils import torch_distributed_zero_first, unwrap_model
@@ -144,6 +145,48 @@ class DetectionTrainer(BaseTrainer):
         self.model.args = self.args  # attach hyperparameters to model
         # TODO: self.model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc
 
+    def update_loss_metadata(self):
+        """Compute GT bbox area statistics for area-based regularization once per training run."""
+        model = unwrap_model(self.model)
+        criterion = getattr(model, "criterion", None)
+        if not isinstance(criterion, v8DetectionLoss):
+            return
+
+        if criterion.area_min_gt is not None and criterion.area_max_gt is not None:
+            return
+
+        dataset = getattr(self.train_loader, "dataset", None)
+        labels = getattr(dataset, "labels", None) if dataset is not None else None
+        if not labels:
+            return
+
+        areas = []
+        for label in labels:
+            bboxes = label.get("bboxes")
+            if bboxes is None or len(bboxes) == 0:
+                continue
+            bbox_format = label.get("bbox_format", "xywh")
+            if bbox_format == "xyxy":
+                wh = bboxes[:, 2:4] - bboxes[:, 0:2]
+                area = np.clip(wh[:, 0] * wh[:, 1], a_min=0.0, a_max=None)
+            else:
+                area = bboxes[:, 2] * bboxes[:, 3]
+            areas.append(area)
+
+        if not areas:
+            return
+
+        flat_areas = np.concatenate(areas, axis=0)
+        if flat_areas.size == 0:
+            return
+
+        criterion.area_min_gt = float(flat_areas.min())
+        criterion.area_max_gt = float(flat_areas.max())
+        if RANK in {-1, 0} and criterion.area_reg_lambda > 0:
+            LOGGER.info(
+                f"GT bbox area stats (normalized): min={criterion.area_min_gt:.4g}, max={criterion.area_max_gt:.4g}"
+            )
+
     def get_model(self, cfg: str | None = None, weights: str | None = None, verbose: bool = True):
         """Return a YOLO detection model.
 
@@ -162,7 +205,7 @@ class DetectionTrainer(BaseTrainer):
 
     def get_validator(self):
         """Return a DetectionValidator for YOLO model validation."""
-        self.loss_names = "box_loss", "cls_loss", "dfl_loss"
+        self.loss_names = "box_loss", "cls_loss", "dfl_loss", "area_loss"
         return yolo.detect.DetectionValidator(
             self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
