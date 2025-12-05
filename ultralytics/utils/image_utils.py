@@ -36,7 +36,7 @@ def load_fits_image(path: str | Path, channels: int = 3) -> np.ndarray:
 
     # --- 【修正点】ここで上下反転を加える ---
     # FITSの標準（左下原点）を 画像処理の標準（左上原点）に合わせる
-    data = np.flipud(data)    
+    data = np.flipud(data)
 
     # Convert and sanitize
     arr = np.asarray(data, dtype=np.float32)
