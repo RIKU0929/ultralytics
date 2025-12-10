@@ -11,9 +11,9 @@ import torch
 
 from ultralytics.data import build_dataloader, build_yolo_dataset, converter
 from ultralytics.engine.validator import BaseValidator
-from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils import LOGGER, nms, ops
 from ultralytics.utils.checks import check_requirements
+from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils.metrics import ConfusionMatrix, DetMetrics, box_iou
 from ultralytics.utils.plotting import plot_images
 
@@ -169,7 +169,6 @@ class DetectionValidator(BaseValidator):
 
     def label_loss_items(self, loss_items: torch.Tensor | None = None, prefix: str = "val") -> dict | list:
         """Return a loss dict with labeled validation loss items tensor."""
-
         keys = [f"{prefix}/{x}" for x in self.loss_names]
         if loss_items is not None:
             loss_items = [round(float(x), 5) for x in loss_items]
@@ -178,7 +177,6 @@ class DetectionValidator(BaseValidator):
 
     def _update_area_loss_metadata(self, model: torch.nn.Module) -> None:
         """Populate area loss normalization stats from the current dataloader if needed."""
-
         model = model if isinstance(model, torch.nn.Module) else getattr(model, "model", model)
         criterion = getattr(model, "criterion", None)
         if not isinstance(criterion, v8DetectionLoss):
