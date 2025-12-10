@@ -116,6 +116,8 @@ class BaseValidator:
         self.iouv = None
         self.jdict = None
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
+        self.loss = None
+        self._loss_fn = None
 
         self.save_dir = save_dir or get_save_dir(self.args)
         (self.save_dir / "labels" if self.args.save_txt else self.save_dir).mkdir(parents=True, exist_ok=True)
@@ -188,6 +190,11 @@ class BaseValidator:
             if self.args.compile:
                 model = attempt_compile(model, device=self.device)
             model.warmup(imgsz=(1 if pt else self.args.batch, self.data["channels"], imgsz, imgsz))  # warmup
+            if hasattr(self, "loss_names"):
+                self.loss = torch.zeros(len(self.loss_names), device=self.device)
+            self._loss_fn = getattr(model, "loss", None)
+            if not callable(self._loss_fn):
+                self.loss = None
 
         self.run_callbacks("on_val_start")
         dt = (
@@ -214,6 +221,8 @@ class BaseValidator:
             with dt[2]:
                 if self.training:
                     self.loss += model.loss(batch, preds)[1]
+                elif self.loss is not None and callable(self._loss_fn):
+                    self.loss += self._loss_fn(batch, preds)[1]
 
             # Postprocess
             with dt[3]:
@@ -247,6 +256,13 @@ class BaseValidator:
                 stats = self.eval_json(stats)  # update stats
             if self.args.plots or self.args.save_json:
                 LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}")
+            if self.loss is not None and self.loss.numel():
+                loss_items = self.loss.cpu() / len(self.dataloader)
+                label_fn = getattr(self, "label_loss_items", None)
+                if callable(label_fn):
+                    stats.update(label_fn(loss_items, prefix="val"))
+                else:
+                    stats.update({f"val/loss{i}": round(float(l), 5) for i, l in enumerate(loss_items)})
             return stats
 
     def match_predictions(

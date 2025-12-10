@@ -11,6 +11,7 @@ import torch
 
 from ultralytics.data import build_dataloader, build_yolo_dataset, converter
 from ultralytics.engine.validator import BaseValidator
+from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils import LOGGER, nms, ops
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.metrics import ConfusionMatrix, DetMetrics, box_iou
@@ -58,6 +59,7 @@ class DetectionValidator(BaseValidator):
         self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
         self.niou = self.iouv.numel()
         self.metrics = DetMetrics()
+        self.loss_names = ("box_loss", "cls_loss", "dfl_loss", "area_loss")
 
     def preprocess(self, batch: dict[str, Any]) -> dict[str, Any]:
         """Preprocess batch of images for YOLO validation.
@@ -96,6 +98,7 @@ class DetectionValidator(BaseValidator):
         self.jdict = []
         self.metrics.names = model.names
         self.confusion_matrix = ConfusionMatrix(names=model.names, save_matches=self.args.plots and self.args.visualize)
+        self._update_area_loss_metadata(model)
 
     def get_desc(self) -> str:
         """Return a formatted string summarizing class metrics of YOLO model."""
@@ -163,6 +166,56 @@ class DetectionValidator(BaseValidator):
         if self.args.single_cls:
             pred["cls"] *= 0
         return pred
+
+    def label_loss_items(self, loss_items: torch.Tensor | None = None, prefix: str = "val") -> dict | list:
+        """Return a loss dict with labeled validation loss items tensor."""
+
+        keys = [f"{prefix}/{x}" for x in self.loss_names]
+        if loss_items is not None:
+            loss_items = [round(float(x), 5) for x in loss_items]
+            return dict(zip(keys, loss_items))
+        return keys
+
+    def _update_area_loss_metadata(self, model: torch.nn.Module) -> None:
+        """Populate area loss normalization stats from the current dataloader if needed."""
+
+        model = model if isinstance(model, torch.nn.Module) else getattr(model, "model", model)
+        criterion = getattr(model, "criterion", None)
+        if not isinstance(criterion, v8DetectionLoss):
+            return
+        if criterion.area_min_gt is not None and criterion.area_max_gt is not None:
+            return
+
+        dataset = getattr(self.dataloader, "dataset", None)
+        labels = getattr(dataset, "labels", None) if dataset is not None else None
+        if not labels:
+            return
+
+        areas = []
+        for label in labels:
+            bboxes = label.get("bboxes")
+            if bboxes is None or len(bboxes) == 0:
+                continue
+            bbox_format = label.get("bbox_format", "xywh")
+            if bbox_format == "xyxy":
+                wh = bboxes[:, 2:4] - bboxes[:, 0:2]
+                area = np.clip(wh[:, 0] * wh[:, 1], a_min=0.0, a_max=None)
+            else:
+                area = bboxes[:, 2] * bboxes[:, 3]
+            areas.append(area)
+
+        if not areas:
+            return
+
+        flat_areas = np.concatenate(areas, axis=0)
+        if flat_areas.size == 0:
+            return
+        criterion.area_min_gt = float(flat_areas.min())
+        criterion.area_max_gt = float(flat_areas.max())
+        if criterion.area_reg_lambda > 0:
+            LOGGER.info(
+                f"GT bbox area stats (normalized): min={criterion.area_min_gt:.4g}, max={criterion.area_max_gt:.4g}"
+            )
 
     def update_metrics(self, preds: list[dict[str, torch.Tensor]], batch: dict[str, Any]) -> None:
         """Update metrics with new predictions and ground truth.
