@@ -43,6 +43,7 @@ from .utils import (
     verify_image,
     verify_image_label,
     verify_image_mask,
+    verify_npy_image_label,
 )
 
 # Ultralytics dataset *.cache version, >= 1.0.0 for Ultralytics YOLO models
@@ -109,20 +110,35 @@ class YOLODataset(BaseDataset):
                 "'kpt_shape' in data.yaml missing or incorrect. Should be a list with [number of "
                 "keypoints, number of dims (2 for x,y or 3 for x,y,visible)], i.e. 'kpt_shape: [17, 3]'"
             )
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(
-                func=verify_image_label,
-                iterable=zip(
-                    self.im_files,
-                    self.label_files,
-                    repeat(self.prefix),
-                    repeat(self.use_keypoints),
-                    repeat(len(self.data["names"])),
-                    repeat(nkpt),
-                    repeat(ndim),
-                    repeat(self.single_cls),
+        verify_args = (
+            (
+                verify_npy_image_label,
+                (im_file, lb_file, self.prefix, len(self.data["names"]), self.single_cls),
+            )
+            if Path(im_file).suffix.lower() == ".npy"
+            else (
+                verify_image_label,
+                (
+                    im_file,
+                    lb_file,
+                    self.prefix,
+                    self.use_keypoints,
+                    len(self.data["names"]),
+                    nkpt,
+                    ndim,
+                    self.single_cls,
                 ),
             )
+            for im_file, lb_file in zip(self.im_files, self.label_files)
+        )
+
+        def verify_label(args: tuple) -> list:
+            """Route image-label verification by image file suffix."""
+            func, func_args = args
+            return func(func_args)
+
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(func=verify_label, iterable=verify_args)
             pbar = TQDM(results, desc=desc, total=total)
             for im_file, lb, shape, segments, keypoint, nm_f, nf_f, ne_f, nc_f, msg in pbar:
                 nm += nm_f
