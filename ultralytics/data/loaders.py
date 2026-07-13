@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageOps
 
-from ultralytics.data.utils import FORMATS_HELP_MSG, IMG_FORMATS, VID_FORMATS
+from ultralytics.data.utils import FORMATS_HELP_MSG, IMG_FORMATS, NPY_FORMATS, VID_FORMATS, is_npy_file, load_npy_image
 from ultralytics.utils import IS_COLAB, IS_KAGGLE, LOGGER, ops
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.patches import imread
@@ -377,7 +377,7 @@ class LoadImagesAndVideos:
         images, videos = [], []
         for f in files:
             suffix = f.rpartition(".")[-1].lower()  # Get file extension without the dot and lowercase
-            if suffix in IMG_FORMATS:
+            if suffix in (IMG_FORMATS | NPY_FORMATS):
                 images.append(f)
             elif suffix in VID_FORMATS:
                 videos.append(f)
@@ -450,7 +450,7 @@ class LoadImagesAndVideos:
             else:
                 # Handle image files
                 self.mode = "image"
-                im0 = imread(path, flags=self.cv2_flag)  # BGR
+                im0 = load_npy_image(path) if is_npy_file(path) else imread(path, flags=self.cv2_flag)  # BGR/.npy
                 if im0 is None:
                     LOGGER.warning(f"Image Read Error {path}")
                 else:

@@ -1075,6 +1075,7 @@ class RandomPerspective(BaseTransform):
         shear: float = 0.0,
         perspective: float = 0.0,
         size: tuple[int, int] | None = None,
+        padding_value: int | float = 114,
     ):
         """Initialize RandomPerspective object with transformation parameters.
 
@@ -1096,6 +1097,7 @@ class RandomPerspective(BaseTransform):
         self.shear = shear
         self.perspective = perspective
         self.size = size
+        self.padding_value = padding_value
 
     def _compute_affine_matrix(self, img: np.ndarray, size: tuple[int, int]) -> tuple[np.ndarray, float]:
         """Compute the affine transformation matrix without applying it.
@@ -1174,9 +1176,9 @@ class RandomPerspective(BaseTransform):
         size = params["size"]
         if (size[0] != img.shape[1] or size[1] != img.shape[0]) or (M != np.eye(3)).any():  # image changed
             if self.perspective:
-                img = cv2.warpPerspective(img, M, dsize=size, borderValue=(114, 114, 114))
+                img = cv2.warpPerspective(img, M, dsize=size, borderValue=(self.padding_value,) * 3)
             else:  # affine
-                img = cv2.warpAffine(img, M[:2], dsize=size, borderValue=(114, 114, 114))
+                img = cv2.warpAffine(img, M[:2], dsize=size, borderValue=(self.padding_value,) * 3)
             if img.ndim == 2:
                 img = img[..., None]
         labels["img"] = img
@@ -2739,6 +2741,7 @@ def v8_transforms(dataset, imgsz: int, hyp: IterableSimpleNamespace):
         shear=hyp.shear,
         perspective=hyp.perspective,
         size=(imgsz, imgsz),
+        padding_value=dataset.npy_padding_value or 114,
     )
 
     pre_transform = Compose([mosaic, affine])
