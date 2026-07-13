@@ -47,6 +47,7 @@ IMG_FORMATS = {
     "jpeg",
     "jpg",
     "mpo",
+    "npy",
     "png",
     "tif",
     "tiff",
@@ -181,13 +182,17 @@ def check_image(im_file: str) -> tuple[str, tuple[int, int]]:
         AssertionError: If the image size is less than 10 pixels in any dimension or the format is invalid.
     """
     msg = ""
-    im = Image.open(im_file)
-    im.verify()  # PIL verify
-    shape = exif_size(im)  # image size
-    shape = (shape[1], shape[0])  # hw
+    if Path(im_file).suffix.lower() == ".npy":
+        shape = np.load(im_file, mmap_mode="r").shape[:2]
+        assert len(shape) == 2, f"invalid npy image shape {shape}"
+    else:
+        im = Image.open(im_file)
+        im.verify()  # PIL verify
+        shape = exif_size(im)  # image size
+        shape = (shape[1], shape[0])  # hw
+        assert im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}. {FORMATS_HELP_MSG}"
     assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
-    assert im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}. {FORMATS_HELP_MSG}"
-    if im.format.lower() in {"jpg", "jpeg"}:
+    if Path(im_file).suffix.lower() != ".npy" and im.format.lower() in {"jpg", "jpeg"}:
         with open(im_file, "rb") as f:
             f.seek(-2, 2)
             if f.read() != b"\xff\xd9":  # corrupt JPEG

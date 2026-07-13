@@ -228,7 +228,9 @@ class BaseDataset(Dataset):
         """
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
+            if Path(f).suffix.lower() == ".npy":
+                im = np.load(f)
+            elif fn.exists():  # load npy
                 try:
                     im = np.load(fn)
                     npy_channels = im.shape[-1] if im.ndim >= 3 else 1
