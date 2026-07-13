@@ -303,6 +303,58 @@ def verify_image_label(args: tuple) -> list:
         return [None, None, None, None, None, nm, nf, ne, nc, msg]
 
 
+def verify_npy_image_label(args: tuple) -> list:
+    """Verify one NPY image and YOLO segmentation label pair."""
+    im_file, lb_file, prefix, num_cls, single_cls = args
+    nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
+    try:
+        im = np.load(im_file, allow_pickle=False)
+        assert im.ndim == 2, f"NPY image must be 2-dimensional, got {im.ndim} dimensions"
+        assert im.dtype == np.float32, f"NPY image dtype must be float32, got {im.dtype}"
+        assert im.size, "NPY image is empty"
+        assert all(x > 0 for x in im.shape), f"NPY image shape must be positive, got {im.shape}"
+        assert np.isfinite(im).all(), "NPY image contains non-finite values"
+        shape = im.shape
+
+        assert os.path.isfile(lb_file), f"label file {lb_file} missing"
+        nf = 1
+        with open(lb_file, encoding="utf-8") as f:
+            rows = [x.split() for x in f.read().strip().splitlines() if len(x)]
+        assert rows, f"label file {lb_file} is empty"
+
+        classes, segments = [], []
+        for row in rows:
+            assert len(row) > 6, f"labels require YOLO segmentation format, got {len(row)} columns"
+            assert len(row[1:]) % 2 == 0, f"polygon coordinates must be x,y pairs, got {len(row[1:])} values"
+            cls = np.float32(row[0])
+            segment = np.array(row[1:], dtype=np.float32).reshape(-1, 2)
+            assert np.isfinite(cls), "class label contains non-finite value"
+            assert float(cls).is_integer(), f"class label {cls} is not an integer"
+            assert np.isfinite(segment).all(), "polygon coordinates contain non-finite values"
+            classes.append(cls)
+            segments.append(segment)
+
+        classes = np.array(classes, dtype=np.float32)
+        max_cls = 0 if single_cls else classes.max()
+        assert max_cls < num_cls, (
+            f"Label class {int(max_cls)} exceeds dataset class count {num_cls}. "
+            f"Possible class labels are 0-{num_cls - 1}"
+        )
+        assert classes.min() >= 0, f"negative class labels {classes[classes < 0]}"
+
+        lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)
+        _, i = np.unique(lb, axis=0, return_index=True)
+        if len(i) < len(lb):
+            lb = lb[i]
+            segments = [segments[x] for x in i]
+            msg = f"{prefix}{im_file}: {len(rows) - len(i)} duplicate labels removed"
+        return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
+    except Exception as e:
+        nc = 1
+        msg = f"{prefix}{im_file}: ignoring corrupt NPY image/label: {e}"
+        return [None, None, None, None, None, nm, nf, ne, nc, msg]
+
+
 def visualize_image_annotations(image_path: str, txt_path: str, label_map: dict[int, str]):
     """Visualize YOLO annotations (bounding boxes and class labels) on an image.
 
