@@ -34,7 +34,7 @@ from ultralytics.data.loaders import (
     SourceTypes,
     autocast_list,
 )
-from ultralytics.data.utils import IMG_FORMATS, VID_FORMATS
+from ultralytics.data.utils import IMG_FORMATS, NPY_FORMATS, VID_FORMATS
 from ultralytics.utils import RANK, colorstr
 from ultralytics.utils.checks import check_file
 from ultralytics.utils.torch_utils import TORCH_2_0
@@ -401,7 +401,7 @@ def check_source(
         source_lower = source.lower()
         is_url = source_lower.startswith(("https://", "http://", "rtsp://", "rtmp://", "tcp://"))
         is_file = (urlsplit(source_lower).path if is_url else source_lower).rpartition(".")[-1] in (
-            IMG_FORMATS | VID_FORMATS
+            IMG_FORMATS | NPY_FORMATS | VID_FORMATS
         )
         webcam = source.isnumeric() or source.endswith(".streams") or (is_url and not is_file)
         screenshot = source_lower == "screen"
@@ -410,8 +410,11 @@ def check_source(
     elif isinstance(source, LOADERS):
         in_memory = True
     elif isinstance(source, (list, tuple)):
-        source = autocast_list(source)  # convert all list elements to PIL or np arrays
-        from_img = True
+        if all(isinstance(x, (str, Path)) for x in source):
+            from_img = False  # file list, including .npy, is handled by LoadImagesAndVideos
+        else:
+            source = autocast_list(source)  # convert all list elements to PIL or np arrays
+            from_img = True
     elif isinstance(source, (Image.Image, np.ndarray)):
         from_img = True
     elif isinstance(source, torch.Tensor):

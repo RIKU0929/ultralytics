@@ -37,6 +37,7 @@ from ultralytics.utils.downloads import download, safe_download, unzip_file
 from ultralytics.utils.ops import segments2boxes
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
+NPY_FORMATS = {"npy"}
 IMG_FORMATS = {
     "avif",
     "bmp",
@@ -53,7 +54,67 @@ IMG_FORMATS = {
     "webp",
 }
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # videos
-FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
+FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS | NPY_FORMATS}\nvideos: {VID_FORMATS}"
+
+
+def is_npy_file(path: str | Path) -> bool:
+    """Return True if a path points to a NumPy .npy image file."""
+    return Path(path).suffix.lower() == ".npy"
+
+
+def load_npy_image(path: str | Path, *, add_channel: bool = True) -> np.ndarray:
+    """Load a normalized float32 2D .npy image, preserving values for the downstream /255 step.
+
+    Args:
+        path (str | Path): NumPy image path.
+        add_channel (bool): Add trailing channel dimension, converting (H, W) to (H, W, 1).
+
+    Returns:
+        (np.ndarray): Float32 image with shape (H, W, 1) when add_channel is True.
+
+    Raises:
+        ValueError: If the file is not a finite, non-empty 2D float32 array.
+    """
+    path = Path(path)
+    try:
+        im = np.load(path, allow_pickle=False)
+    except Exception as e:
+        raise ValueError(f"{path}: failed to load .npy image with allow_pickle=False: {e}") from e
+    if im.ndim != 2:
+        raise ValueError(f"{path}: .npy image must be 2D (H, W), got shape {im.shape}")
+    if im.dtype != np.float32:
+        raise ValueError(f"{path}: .npy image must have dtype float32, got {im.dtype}")
+    if im.size == 0 or im.shape[0] <= 0 or im.shape[1] <= 0:
+        raise ValueError(f"{path}: .npy image must be non-empty with positive height and width, got shape {im.shape}")
+    if not np.isfinite(im).all():
+        raise ValueError(f"{path}: .npy image contains NaN or Inf values")
+    return im[..., None] if add_channel else im
+
+
+def check_npy_image(im_file: str | Path) -> tuple[str, tuple[int, int]]:
+    """Validate a .npy image and return image shape as (height, width)."""
+    im = load_npy_image(im_file, add_channel=False)
+    return "", im.shape[:2]
+
+
+def resolve_npy_padding_value(data: dict | None = None, explicit: float | None = None) -> float | None:
+    """Resolve .npy LetterBox padding from explicit args, data.yaml, or normalization.json."""
+    if explicit is not None:
+        return float(explicit)
+    data = data or {}
+    if data.get("npy_padding_value") is not None:
+        return float(data["npy_padding_value"])
+    root = data.get("path")
+    if root:
+        norm_file = Path(root) / "normalization.json"
+        if norm_file.exists():
+            try:
+                value = json.loads(norm_file.read_text()).get("zero_gauss_value_npy")
+            except Exception as e:
+                raise ValueError(f"{norm_file}: failed to read zero_gauss_value_npy: {e}") from e
+            if value is not None:
+                return float(value)
+    return None
 
 
 def img2label_paths(img_paths: list[str], label_dir: str = "labels", suffix: str = ".txt") -> list[str]:
@@ -217,7 +278,7 @@ def verify_image_mask(args: tuple) -> tuple:
     # Number (found, missing, corrupt), message
     nf, nm, nc, msg = 0, 0, 0, ""
     try:
-        msg, shape = check_image(im_file)
+        msg, shape = check_npy_image(im_file) if is_npy_file(im_file) else check_image(im_file)
         msg = f"{prefix}{msg}" if msg else ""
         if not os.path.isfile(mask_file):
             for ext in IMG_FORMATS:  # check other suffixes
@@ -248,7 +309,7 @@ def verify_image_label(args: tuple) -> list:
     nm, nf, ne, nc, msg, segments, keypoints = 0, 0, 0, 0, "", [], None
     try:
         # Verify images
-        msg, shape = check_image(im_file)
+        msg, shape = check_npy_image(im_file) if is_npy_file(im_file) else check_image(im_file)
         msg = f"{prefix}{msg}" if msg else ""
 
         # Verify labels

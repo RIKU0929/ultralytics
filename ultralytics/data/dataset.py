@@ -43,6 +43,7 @@ from .utils import (
     verify_image,
     verify_image_label,
     verify_image_mask,
+    resolve_npy_padding_value,
 )
 
 # Ultralytics dataset *.cache version, >= 1.0.0 for Ultralytics YOLO models
@@ -87,6 +88,9 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
+        self.npy_padding_value = resolve_npy_padding_value(
+            data, getattr(kwargs.get("hyp", None), "npy_padding_value", None)
+        )
         assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
         super().__init__(*args, channels=self.data.get("channels", 3), **kwargs)
 
@@ -228,7 +232,13 @@ class YOLODataset(BaseDataset):
             hyp.cutmix = hyp.cutmix if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
-            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+            transforms = Compose(
+                [
+                    LetterBox(
+                        new_shape=(self.imgsz, self.imgsz), scaleup=False, padding_value=self.npy_padding_value or 114
+                    )
+                ]
+            )
         transforms.append(
             Format(
                 bbox_format="xywh",

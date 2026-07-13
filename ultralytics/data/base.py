@@ -15,7 +15,15 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
-from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds
+from ultralytics.data.utils import (
+    FORMATS_HELP_MSG,
+    HELP_URL,
+    IMG_FORMATS,
+    NPY_FORMATS,
+    check_file_speeds,
+    is_npy_file,
+    load_npy_image,
+)
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
 from ultralytics.utils.patches import imread
 
@@ -115,6 +123,12 @@ class BaseDataset(Dataset):
         self.channels = channels
         self.cv2_flag = cv2.IMREAD_GRAYSCALE if channels == 1 else cv2.IMREAD_COLOR
         self.im_files = self.get_img_files(self.img_path)
+        self.uses_npy = any(is_npy_file(f) for f in self.im_files)
+        self.npy_padding_value = getattr(self, "npy_padding_value", None)
+        if self.uses_npy and self.npy_padding_value is None:
+            raise ValueError(
+                "npy_padding_value is required when using .npy images; set it in API/CLI, data.yaml, or normalization.json"
+            )
         self.labels = self.get_labels()
         self.update_labels(include_class=classes)  # single_cls and include_class
         self.ni = len(self.labels)  # number of images
@@ -132,8 +146,13 @@ class BaseDataset(Dataset):
 
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
-        self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
+        self.npy_files = [None if is_npy_file(f) else Path(f).with_suffix(".npy") for f in self.im_files]
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        if self.uses_npy and self.cache == "disk":
+            LOGGER.warning(
+                f"{self.prefix}Disabling cache='disk' for source .npy images to avoid cache/source collisions"
+            )
+            self.cache = None
         if self.cache == "ram" and self.check_cache_ram():
             if hyp.deterministic:
                 LOGGER.warning(
@@ -174,7 +193,9 @@ class BaseDataset(Dataset):
                         # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global (pathlib)
                 else:
                     raise FileNotFoundError(f"{self.prefix}{p} does not exist")
-            im_files = sorted(x.replace("/", os.sep) for x in f if x.rpartition(".")[-1].lower() in IMG_FORMATS)
+            im_files = sorted(
+                x.replace("/", os.sep) for x in f if x.rpartition(".")[-1].lower() in (IMG_FORMATS | NPY_FORMATS)
+            )
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
         except Exception as e:
@@ -228,7 +249,9 @@ class BaseDataset(Dataset):
         """
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
+            if is_npy_file(f):
+                im = load_npy_image(f)
+            elif fn is not None and fn.exists():  # load disk cache for regular images only
                 try:
                     im = np.load(fn)
                     npy_channels = im.shape[-1] if im.ndim >= 3 else 1
@@ -286,7 +309,7 @@ class BaseDataset(Dataset):
             pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if self.cache == "disk":
-                    b += self.npy_files[i].stat().st_size
+                    b += self.npy_files[i].stat().st_size if self.npy_files[i] is not None else 0
                 else:  # 'ram'
                     self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
                     b += self.ims[i].nbytes
@@ -296,6 +319,8 @@ class BaseDataset(Dataset):
     def cache_images_to_disk(self, i: int) -> None:
         """Save an image as an *.npy file for faster loading."""
         f = self.npy_files[i]
+        if f is None:
+            return
         if not f.exists():
             try:
                 np.save(f.as_posix(), imread(self.im_files[i], flags=self.cv2_flag), allow_pickle=False)
@@ -318,7 +343,7 @@ class BaseDataset(Dataset):
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
             im_file = random.choice(self.im_files)
-            im = imread(im_file)
+            im = load_npy_image(im_file) if is_npy_file(im_file) else imread(im_file)
             if im is None:
                 continue
             b += im.nbytes
@@ -350,7 +375,8 @@ class BaseDataset(Dataset):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
-            im = imread(random.choice(self.im_files))  # sample image
+            im_file = random.choice(self.im_files)
+            im = load_npy_image(im_file) if is_npy_file(im_file) else imread(im_file)  # sample image
             if im is None:
                 continue
             ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
