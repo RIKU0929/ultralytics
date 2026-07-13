@@ -228,18 +228,13 @@ class BaseDataset(Dataset):
         """
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
+            if Path(f).suffix.lower() == ".npy":
+                im = self.load_npy_image(f)
+            elif fn.exists():  # load npy
                 try:
-                    im = np.load(fn)
-                    npy_channels = im.shape[-1] if im.ndim >= 3 else 1
-                    if npy_channels != self.channels:
-                        LOGGER.warning(
-                            f"{self.prefix}Removing stale *.npy image file {fn} with {npy_channels} channels, expected {self.channels}"
-                        )
-                        Path(fn).unlink(missing_ok=True)
-                        im = imread(f, flags=self.cv2_flag)
+                    im = self.load_npy_image(fn)
                 except Exception as e:
-                    LOGGER.warning(f"{self.prefix}Removing corrupt *.npy image file {fn} due to: {e}")
+                    LOGGER.warning(f"{self.prefix}Removing stale or corrupt *.npy image file {fn} due to: {e}")
                     Path(fn).unlink(missing_ok=True)
                     im = imread(f, flags=self.cv2_flag)  # BGR
             else:  # read image
@@ -286,16 +281,27 @@ class BaseDataset(Dataset):
             pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if self.cache == "disk":
-                    b += self.npy_files[i].stat().st_size
+                    cache_file = self.npy_files[i]
+                    b += cache_file.stat().st_size if cache_file.exists() else Path(self.im_files[i]).stat().st_size
                 else:  # 'ram'
                     self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
                     b += self.ims[i].nbytes
                 pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
             pbar.close()
 
+    def load_npy_image(self, path: str | Path) -> np.ndarray:
+        """Load a NumPy image file and validate that its channel count matches the dataset configuration."""
+        im = np.load(path, allow_pickle=False)
+        npy_channels = im.shape[-1] if im.ndim >= 3 else 1
+        if npy_channels != self.channels:
+            raise ValueError(f"*.npy image file {path} has {npy_channels} channels, expected {self.channels}")
+        return im
+
     def cache_images_to_disk(self, i: int) -> None:
-        """Save an image as an *.npy file for faster loading."""
+        """Save an image as an *.npy file for faster loading, skipping source *.npy images."""
         f = self.npy_files[i]
+        if Path(self.im_files[i]).suffix.lower() == ".npy":
+            return
         if not f.exists():
             try:
                 np.save(f.as_posix(), imread(self.im_files[i], flags=self.cv2_flag), allow_pickle=False)
@@ -318,6 +324,8 @@ class BaseDataset(Dataset):
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
             im_file = random.choice(self.im_files)
+            if Path(im_file).suffix.lower() == ".npy":
+                continue
             im = imread(im_file)
             if im is None:
                 continue
@@ -350,7 +358,8 @@ class BaseDataset(Dataset):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
-            im = imread(random.choice(self.im_files))  # sample image
+            im_file = random.choice(self.im_files)
+            im = self.load_npy_image(im_file) if Path(im_file).suffix.lower() == ".npy" else imread(im_file)
             if im is None:
                 continue
             ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
