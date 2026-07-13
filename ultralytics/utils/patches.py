@@ -33,6 +33,9 @@ def imread(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
         >>> img = imread("path/to/image.jpg", cv2.IMREAD_GRAYSCALE)
     """
     try:
+        if filename.endswith(".npy"):
+            im = np.load(filename)
+            return im[..., None] if im.ndim == 2 else im
         file_bytes = np.fromfile(filename, np.uint8)
     except (FileNotFoundError, OSError):
         return None

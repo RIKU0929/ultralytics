@@ -80,6 +80,7 @@ show_labels: True # (bool) draw class labels on images, e.g. 'person'
 show_conf: True # (bool) draw confidence values on images, e.g. '0.99'
 show_boxes: True # (bool) draw bounding boxes on images
 line_width: # (int, optional) line width of boxes; auto-scales with image size if not set
+npy_padding_value: null # (float, optional) padding value for .npy inputs; falls back to data.yaml or normalization.json
 
 # Export settings ------------------------------------------------------------------------------------------------------
 format: torchscript # (str) target format, e.g. torchscript|onnx|openvino|engine|coreml|saved_model|pb|edgetpu|paddle|mnn|ncnn|imx|rknn|executorch|axelera|deepx|qnn|litert

@@ -39,6 +39,7 @@ from .utils import (
     img2label_paths,
     load_dataset_cache_file,
     polygons2masks_overlap,
+    resolve_npy_padding_value,
     save_dataset_cache_file,
     verify_image,
     verify_image_label,
@@ -228,7 +229,12 @@ class YOLODataset(BaseDataset):
             hyp.cutmix = hyp.cutmix if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
-            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+            letterbox_args = {"new_shape": (self.imgsz, self.imgsz), "scaleup": False}
+            if any(Path(f).suffix.lower() == ".npy" for f in self.im_files):
+                letterbox_args["padding_value"] = resolve_npy_padding_value(
+                    getattr(hyp, "npy_padding_value", None), self.data
+                )
+            transforms = Compose([LetterBox(**letterbox_args)])
         transforms.append(
             Format(
                 bbox_format="xywh",

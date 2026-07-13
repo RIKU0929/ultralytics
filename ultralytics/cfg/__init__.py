@@ -205,6 +205,7 @@ CFG_FLOAT_KEYS = frozenset(
         "time",
         "workspace",
         "batch",
+        "npy_padding_value",
     }
 )
 CFG_FRACTION_KEYS = frozenset(

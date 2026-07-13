@@ -90,6 +90,18 @@ def test_cfg_rejects_fuzzed_scalars():
         get_cfg(overrides={"cls_pw": 10})
 
 
+def test_resolve_npy_padding_value_precedence(tmp_path):
+    """Test .npy padding resolves from overrides, data.yaml, and normalization metadata in order."""
+    from ultralytics.data.utils import resolve_npy_padding_value
+
+    (tmp_path / "normalization.json").write_text('{"zero_gauss_value_npy": 0.25}')
+    assert resolve_npy_padding_value(1, {"npy_padding_value": 2, "path": tmp_path}) == 1.0
+    assert resolve_npy_padding_value(None, {"npy_padding_value": "2.5", "path": tmp_path}) == 2.5
+    assert resolve_npy_padding_value(None, {"path": tmp_path}) == 0.25
+    with pytest.raises(ValueError, match="npy_padding_value"):
+        resolve_npy_padding_value(None, {"path": tmp_path / "missing"})
+
+
 def skip_rpi_semantic():
     """Skip semantic segmentation tests on Raspberry Pi due to memory constraints."""
     if IS_RASPBERRYPI:

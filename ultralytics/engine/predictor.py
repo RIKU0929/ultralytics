@@ -51,6 +51,7 @@ import torch
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data import load_inference_source
 from ultralytics.data.augment import LetterBox
+from ultralytics.data.utils import resolve_npy_padding_value
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.utils import DEFAULT_CFG, LOGGER, MACOS, WINDOWS, callbacks, colorstr, ops
 from ultralytics.utils.checks import check_imgsz, check_imshow
@@ -195,12 +196,20 @@ class BasePredictor:
             (list[np.ndarray]): List of transformed images.
         """
         same_shapes = len({x.shape for x in im}) == 1
+        is_npy = any(Path(x).suffix.lower() == ".npy" for x in getattr(self.dataset, "files", []))
+        letterbox_args = {}
+        if is_npy:
+            root = Path(self.dataset.files[0]).parent if getattr(self.dataset, "files", None) else None
+            letterbox_args["padding_value"] = resolve_npy_padding_value(
+                getattr(self.args, "npy_padding_value", None), getattr(self.args, "data", None), root
+            )
         letterbox = LetterBox(
             self.imgsz,
             auto=same_shapes
             and self.args.rect
             and (self.model.format == "pt" or (getattr(self.model, "dynamic", False) and self.model.format != "imx")),
             stride=self.model.stride,
+            **letterbox_args,
         )
         return [letterbox(image=x) for x in im]
 

@@ -47,6 +47,7 @@ IMG_FORMATS = {
     "jpeg",
     "jpg",
     "mpo",
+    "npy",
     "png",
     "tif",
     "tiff",
@@ -54,6 +55,52 @@ IMG_FORMATS = {
 }
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # videos
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
+
+
+def resolve_npy_padding_value(
+    cfg_value: float | int | str | None = None,
+    data: dict[str, Any] | str | Path | None = None,
+    root: str | Path | None = None,
+) -> float:
+    """Resolve the padding value for .npy inputs from overrides, data config, or dataset normalization metadata.
+
+    Args:
+        cfg_value (float | int | str | None): API/CLI value. Takes precedence when not None.
+        data (dict[str, Any] | str | Path | None): Dataset configuration dict or data.yaml path.
+        root (str | Path | None): Dataset root containing normalization.json.
+
+    Returns:
+        (float): Resolved .npy padding value.
+
+    Raises:
+        ValueError: If no padding value is available.
+        TypeError: If the resolved value cannot be converted to float.
+    """
+
+    def _to_float(value: Any, source: str) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as e:
+            raise TypeError(f"{source} npy padding value must be a float, got {value!r}.") from e
+
+    data_dict = YAML.load(data) if isinstance(data, (str, Path)) and Path(data).suffix in {".yaml", ".yml"} else data
+    if cfg_value is not None:
+        return _to_float(cfg_value, "API/CLI")
+    if isinstance(data_dict, dict):
+        if data_dict.get("npy_padding_value") is not None:
+            return _to_float(data_dict["npy_padding_value"], "data.yaml")
+        root = root or data_dict.get("path") or Path(data_dict.get("yaml_file", "")).parent
+    if root:
+        normalization_file = Path(root) / "normalization.json"
+        if normalization_file.is_file():
+            with open(normalization_file, encoding="utf-8") as f:
+                value = json.load(f).get("zero_gauss_value_npy")
+            if value is not None:
+                return _to_float(value, normalization_file.as_posix())
+    raise ValueError(
+        "npy_padding_value is required for .npy inputs. Set npy_padding_value in API/CLI, data.yaml, or "
+        "zero_gauss_value_npy in dataset root normalization.json."
+    )
 
 
 def img2label_paths(img_paths: list[str], label_dir: str = "labels", suffix: str = ".txt") -> list[str]:
@@ -181,6 +228,11 @@ def check_image(im_file: str) -> tuple[str, tuple[int, int]]:
         AssertionError: If the image size is less than 10 pixels in any dimension or the format is invalid.
     """
     msg = ""
+    if str(im_file).lower().endswith(".npy"):
+        im = np.load(im_file)
+        shape = im.shape[:2]
+        assert len(shape) == 2 and (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
+        return msg, shape
     im = Image.open(im_file)
     im.verify()  # PIL verify
     shape = exif_size(im)  # image size
