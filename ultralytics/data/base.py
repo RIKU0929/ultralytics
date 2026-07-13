@@ -132,8 +132,13 @@ class BaseDataset(Dataset):
 
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
-        self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
+        self.npy_files = [
+            None if Path(f).suffix.lower() == ".npy" else Path(f).with_suffix(".npy") for f in self.im_files
+        ]
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        if self.cache == "disk" and any(f is None for f in self.npy_files):
+            self.cache = None
+            LOGGER.warning(f"{self.prefix}Skipping disk image caching for *.npy image datasets")
         if self.cache == "ram" and self.check_cache_ram():
             if hyp.deterministic:
                 LOGGER.warning(
@@ -228,19 +233,21 @@ class BaseDataset(Dataset):
         """
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
         if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
+            if fn is None:
+                im = np.load(f, allow_pickle=False)
+            elif fn.exists():  # load npy cache
                 try:
-                    im = np.load(fn)
+                    im = np.load(fn, allow_pickle=False)
                     npy_channels = im.shape[-1] if im.ndim >= 3 else 1
                     if npy_channels != self.channels:
                         LOGGER.warning(
-                            f"{self.prefix}Removing stale *.npy image file {fn} with {npy_channels} channels, expected {self.channels}"
+                            f"{self.prefix}Removing stale *.npy image cache {fn} with {npy_channels} channels, expected {self.channels}"
                         )
-                        Path(fn).unlink(missing_ok=True)
+                        fn.unlink(missing_ok=True)
                         im = imread(f, flags=self.cv2_flag)
                 except Exception as e:
-                    LOGGER.warning(f"{self.prefix}Removing corrupt *.npy image file {fn} due to: {e}")
-                    Path(fn).unlink(missing_ok=True)
+                    LOGGER.warning(f"{self.prefix}Removing corrupt *.npy image cache {fn} due to: {e}")
+                    fn.unlink(missing_ok=True)
                     im = imread(f, flags=self.cv2_flag)  # BGR
             else:  # read image
                 im = imread(f, flags=self.cv2_flag)  # BGR
@@ -296,7 +303,7 @@ class BaseDataset(Dataset):
     def cache_images_to_disk(self, i: int) -> None:
         """Save an image as an *.npy file for faster loading."""
         f = self.npy_files[i]
-        if not f.exists():
+        if f is not None and not f.exists():
             try:
                 np.save(f.as_posix(), imread(self.im_files[i], flags=self.cv2_flag), allow_pickle=False)
             except Exception as e:
@@ -318,7 +325,7 @@ class BaseDataset(Dataset):
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
             im_file = random.choice(self.im_files)
-            im = imread(im_file)
+            im = np.load(im_file, allow_pickle=False) if Path(im_file).suffix.lower() == ".npy" else imread(im_file)
             if im is None:
                 continue
             b += im.nbytes
@@ -350,7 +357,8 @@ class BaseDataset(Dataset):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
-            im = imread(random.choice(self.im_files))  # sample image
+            im_file = random.choice(self.im_files)
+            im = np.load(im_file, allow_pickle=False) if Path(im_file).suffix.lower() == ".npy" else imread(im_file)
             if im is None:
                 continue
             ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio

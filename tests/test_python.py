@@ -21,6 +21,7 @@ from tests import CFG, MODEL, MODELS, SOURCE, SOURCES_LIST, TASK_MODEL_DATA
 from ultralytics import RTDETR, YOLO
 from ultralytics.cfg import get_cfg
 from ultralytics.data.build import build_dataloader, load_inference_source
+from ultralytics.data.base import BaseDataset
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.utils import (
     ARM64,
@@ -43,6 +44,43 @@ from ultralytics.utils import (
 )
 from ultralytics.utils.downloads import download, safe_download
 from ultralytics.utils.torch_utils import TORCH_1_11, TORCH_1_13
+
+
+class NumpyImageDataset(BaseDataset):
+    """Minimal dataset for testing BaseDataset with native NumPy image files."""
+
+    def get_labels(self) -> list[dict]:
+        return [
+            {
+                "im_file": im_file,
+                "shape": np.load(im_file, allow_pickle=False).shape[:2],
+                "cls": np.empty((0, 1)),
+                "bboxes": np.empty((0, 4)),
+                "segments": [],
+                "bbox_format": "xywh",
+                "normalized": True,
+            }
+            for im_file in self.im_files
+        ]
+
+    def build_transforms(self, hyp=None):
+        return lambda x: x
+
+
+def test_base_dataset_loads_native_npy_images_without_disk_cache(tmp_path):
+    """Test native .npy image files load directly and do not reuse their path as a disk cache."""
+    im_file = tmp_path / "image.npy"
+    np.save(im_file, np.zeros((5, 7), dtype=np.uint8), allow_pickle=False)
+
+    dataset = NumpyImageDataset(str(tmp_path), imgsz=10, cache="disk", channels=1)
+    im, hw0, hw = dataset.load_image(0)
+
+    assert dataset.cache is None
+    assert dataset.npy_files == [None]
+    assert im.shape == (7, 10, 1)
+    assert hw0 == (5, 7)
+    assert hw == (7, 10)
+    assert im_file.exists()
 
 
 def test_dataloader_caps_workers_to_batches():

@@ -47,6 +47,7 @@ IMG_FORMATS = {
     "jpeg",
     "jpg",
     "mpo",
+    "npy",
     "png",
     "tif",
     "tiff",
