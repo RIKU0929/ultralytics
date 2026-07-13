@@ -1,6 +1,7 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -10,8 +11,6 @@ from ultralytics.cfg import get_cfg
 from ultralytics.data import build_yolo_dataset, load_inference_source
 from ultralytics.data.augment import LetterBox
 from ultralytics.data.utils import load_npy_image
-from types import SimpleNamespace
-
 from ultralytics.models.yolo.detect.train import DetectionTrainer
 
 

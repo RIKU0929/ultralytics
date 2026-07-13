@@ -39,11 +39,11 @@ from .utils import (
     img2label_paths,
     load_dataset_cache_file,
     polygons2masks_overlap,
+    resolve_npy_padding_value,
     save_dataset_cache_file,
     verify_image,
     verify_image_label,
     verify_image_mask,
-    resolve_npy_padding_value,
 )
 
 # Ultralytics dataset *.cache version, >= 1.0.0 for Ultralytics YOLO models
