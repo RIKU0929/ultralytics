@@ -47,6 +47,7 @@ IMG_FORMATS = {
     "jpeg",
     "jpg",
     "mpo",
+    "npy",
     "png",
     "tif",
     "tiff",
@@ -54,6 +55,14 @@ IMG_FORMATS = {
 }
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # videos
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
+
+
+def is_npy_image_path(path: str | Path) -> bool:
+    """Return True if a path is a source *.npy image, not a disk-cache file for a sibling image."""
+    path = Path(path)
+    return path.suffix.lower() == ".npy" and not any(
+        path.with_suffix(f".{suffix}").is_file() for suffix in IMG_FORMATS - {"npy"}
+    )
 
 
 def img2label_paths(img_paths: list[str], label_dir: str = "labels", suffix: str = ".txt") -> list[str]:
@@ -181,13 +190,18 @@ def check_image(im_file: str) -> tuple[str, tuple[int, int]]:
         AssertionError: If the image size is less than 10 pixels in any dimension or the format is invalid.
     """
     msg = ""
-    im = Image.open(im_file)
-    im.verify()  # PIL verify
-    shape = exif_size(im)  # image size
-    shape = (shape[1], shape[0])  # hw
+    if is_npy_image_path(im_file):
+        im = np.load(im_file)
+        shape = im.shape[:2]
+        assert im.ndim in {2, 3}, f"invalid npy image dimensions {im.shape}"
+    else:
+        im = Image.open(im_file)
+        im.verify()  # PIL verify
+        shape = exif_size(im)  # image size
+        shape = (shape[1], shape[0])  # hw
+        assert im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}. {FORMATS_HELP_MSG}"
     assert (shape[0] > 9) & (shape[1] > 9), f"image size {shape} <10 pixels"
-    assert im.format.lower() in IMG_FORMATS, f"Invalid image format {im.format}. {FORMATS_HELP_MSG}"
-    if im.format.lower() in {"jpg", "jpeg"}:
+    if not is_npy_image_path(im_file) and im.format.lower() in {"jpg", "jpeg"}:
         with open(im_file, "rb") as f:
             f.seek(-2, 2)
             if f.read() != b"\xff\xd9":  # corrupt JPEG

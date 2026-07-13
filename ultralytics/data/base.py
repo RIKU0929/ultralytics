@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
-from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds
+from ultralytics.data.utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS, check_file_speeds, is_npy_image_path
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
 from ultralytics.utils.patches import imread
 
@@ -132,7 +132,7 @@ class BaseDataset(Dataset):
 
         # Cache images (options are cache = True, False, None, "ram", "disk")
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
-        self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
+        self.npy_files = [self.cache_npy_path(f) for f in self.im_files]
         self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
         if self.cache == "ram" and self.check_cache_ram():
             if hyp.deterministic:
@@ -174,7 +174,12 @@ class BaseDataset(Dataset):
                         # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global (pathlib)
                 else:
                     raise FileNotFoundError(f"{self.prefix}{p} does not exist")
-            im_files = sorted(x.replace("/", os.sep) for x in f if x.rpartition(".")[-1].lower() in IMG_FORMATS)
+            im_files = sorted(
+                x.replace("/", os.sep)
+                for x in f
+                if (suffix := x.rpartition(".")[-1].lower()) in IMG_FORMATS
+                and (suffix != "npy" or is_npy_image_path(x))
+            )
             # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
             assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
         except Exception as e:
@@ -207,6 +212,16 @@ class BaseDataset(Dataset):
             if self.single_cls:
                 self.labels[i]["cls"][:, 0] = 0
 
+    @staticmethod
+    def cache_npy_path(path: str | Path) -> Path:
+        """Return the disk-cache *.npy path, avoiding collisions with source *.npy images."""
+        path = Path(path)
+        return path.with_suffix(f"{path.suffix}.npy") if is_npy_image_path(path) else path.with_suffix(".npy")
+
+    def read_image(self, path: str) -> np.ndarray | None:
+        """Read a source image file, including source *.npy images."""
+        return np.load(path) if is_npy_image_path(path) else imread(path, flags=self.cv2_flag)
+
     def load_image(
         self, i: int, rect_mode: bool = True, resize_short: bool = False
     ) -> tuple[np.ndarray, tuple[int, int], tuple[int, int]]:
@@ -237,13 +252,13 @@ class BaseDataset(Dataset):
                             f"{self.prefix}Removing stale *.npy image file {fn} with {npy_channels} channels, expected {self.channels}"
                         )
                         Path(fn).unlink(missing_ok=True)
-                        im = imread(f, flags=self.cv2_flag)
+                        im = self.read_image(f)
                 except Exception as e:
                     LOGGER.warning(f"{self.prefix}Removing corrupt *.npy image file {fn} due to: {e}")
                     Path(fn).unlink(missing_ok=True)
-                    im = imread(f, flags=self.cv2_flag)  # BGR
+                    im = self.read_image(f)  # BGR
             else:  # read image
-                im = imread(f, flags=self.cv2_flag)  # BGR
+                im = self.read_image(f)  # BGR
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {f}")
 
@@ -298,7 +313,7 @@ class BaseDataset(Dataset):
         f = self.npy_files[i]
         if not f.exists():
             try:
-                np.save(f.as_posix(), imread(self.im_files[i], flags=self.cv2_flag), allow_pickle=False)
+                np.save(f.as_posix(), self.read_image(self.im_files[i]), allow_pickle=False)
             except Exception as e:
                 f.unlink(missing_ok=True)
                 LOGGER.warning(f"{self.prefix}WARNING ⚠️ Failed to cache image {f}: {e}")
@@ -318,7 +333,7 @@ class BaseDataset(Dataset):
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
             im_file = random.choice(self.im_files)
-            im = imread(im_file)
+            im = self.read_image(im_file)
             if im is None:
                 continue
             b += im.nbytes
@@ -350,7 +365,7 @@ class BaseDataset(Dataset):
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         n = min(self.ni, 30)  # extrapolate from 30 random images
         for _ in range(n):
-            im = imread(random.choice(self.im_files))  # sample image
+            im = self.read_image(random.choice(self.im_files))  # sample image
             if im is None:
                 continue
             ratio = self.imgsz / max(im.shape[0], im.shape[1])  # max(h, w)  # ratio
